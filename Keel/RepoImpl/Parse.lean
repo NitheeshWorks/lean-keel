@@ -31,9 +31,6 @@ namespace Parser
 
 variable {τ ε ε' α β : Type}
 
-/-- The list semantics of a parser: what it does to a list of tokens. Every
-law in the library is stated with it. -/
-def parse (p : Parser τ ε α) (l : List τ) : Reply τ ε α := (p.run l 0).toReply l
 
 theorem run_list (p : Parser τ ε α) (l : List τ) (i : Nat) :
     p.run l i = (p.run (l.drop i) 0).shift i := p.run_eq l i
@@ -375,6 +372,54 @@ def manyTill [ParseError ε] (p : Parser τ ε α) (stop : Parser τ ε β) : Pa
   let as ← many (notFollowedBy stop *> p)
   let _ ← stop
   pure as
+
+/-! ## Confinement -/
+
+/-- Run `p` on exactly the next `n` tokens: `p` sees the input end after them
+and must consume all of them. Fewer than `n` tokens left is `eof`; `p`
+stopping short is `unexpected` where it stopped. No copying: `p` runs on a
+`Slice` of the same buffer, so its positions are positions in the buffer. -/
+def isolate [ParseError ε] (n : Nat) (p : Parser τ ε α) : Parser τ ε α where
+  run s i :=
+    if Input.size s - i < n then .error ParseError.eof i else
+    match p.run (Slice.mk s (i + n)) i with
+    | .ok a j => if j = i + n then .ok a j else .error ParseError.unexpected j
+    | .error e j => .error e j
+  run_eq s i := by
+    have hL : Input.size (Input.rest s i) - 0 = Input.size s - i := by
+      rw [Input.size_list, Input.length_rest, Nat.sub_zero]
+    have hs : p.run (Slice.mk s (i + n)) i = (p.run (Slice.mk (Input.rest s i) n) 0).shift i := by
+      rw [p.run_eq (Slice.mk s (i + n)) i, p.run_eq (Slice.mk (Input.rest s i) n) 0]
+      simp [Input.rest, List.drop_take]
+    show (if _ then _ else _) = Result.shift i (if _ then _ else _)
+    rw [hL, hs]
+    by_cases h : Input.size s - i < n
+    · simp [h]
+    · simp only [h, ite_false]
+      cases hc : p.run (Slice.mk (Input.rest s i) n) 0 with
+      | ok a j =>
+        by_cases hj : j = n
+        · simp [hc, hj, Nat.add_comm]
+        · have : ¬ j + i = i + n := by omega
+          simp [hc, hj, this]
+      | error e j => simp [hc]
+  pos_le l := by
+    have hs : p.run (Slice.mk l (0 + n)) 0 = p.run (l.take n) 0 := by
+      rw [p.run_eq]; simp
+    show Result.pos (if _ then _ else _) ≤ _
+    rw [hs]
+    by_cases h : Input.size l - 0 < n
+    · rw [ite_eq_left h]; simp
+    · rw [ite_eq_right h]
+      simp only [Input.size_list, Nat.sub_zero] at h
+      have hb := p.pos_le (l.take n)
+      rw [List.length_take] at hb
+      cases hc : p.run (l.take n) 0 with
+      | ok a j =>
+        rw [hc] at hb; simp only [Result.pos_ok] at hb
+        simp only
+        split <;> simp <;> omega
+      | error e j => rw [hc] at hb; simp only [Result.pos_error] at hb ⊢; omega
 
 /-! ## Recursion -/
 

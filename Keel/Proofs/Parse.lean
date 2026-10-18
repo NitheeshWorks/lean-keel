@@ -90,6 +90,19 @@ theorem run_eq_error_of_parse {σ : Type} [Input σ τ] (p : Parser τ ε α) {s
     rw [Input.size_eq] at hb hi ⊢
     omega
 
+/-- A result on a buffer is the list meaning on the tokens from the start position. -/
+theorem parse_of_run {σ : Type} [Input σ τ] (p : Parser τ ε α) {s : σ} {i : Nat} {a : α} {j : Nat}
+    (h : p.run s i = .ok a j) : p.parse (Input.rest s i) = .ok a (Input.rest s j) := by
+  rw [p.run_eq s i] at h
+  unfold parse
+  cases hc : p.run (Input.rest s i) 0 with
+  | ok a' j' =>
+    rw [hc] at h
+    simp only [Result.shift_ok, Result.ok.injEq] at h
+    obtain ⟨rfl, rfl⟩ := h
+    simp [Input.rest, List.drop_drop, Nat.add_comm]
+  | error e j' => rw [hc] at h; simp at h
+
 /-- What is left is a suffix of the input. -/
 theorem parse_rest_suffix (p : Parser τ ε α) (l : List τ) : (p.parse l).rest <:+ l := by
   unfold parse
@@ -409,6 +422,51 @@ theorem parse_sepBy1 (p : Parser τ ε α) (sep : Parser τ ε β) (l : List τ)
       | .error _ _ => .ok () l := by
   simp only [notFollowedBy, parse_bind, parse_optional, parse_attempt, parse_lookahead]
   cases p.parse l <;> simp
+
+/-! ## Confinement -/
+
+/-- **Confinement.** `isolate n p` parses the next `n` tokens with `p`, which
+must consume all of them, and leaves the rest untouched. -/
+theorem parse_isolate [ParseError ε] (n : Nat) (p : Parser τ ε α) (l : List τ) :
+    (isolate n p).parse l =
+      if l.length < n then .error ParseError.eof l else
+      match p.parse (l.take n) with
+      | .ok a r => if r = [] then .ok a (l.drop n) else .error ParseError.unexpected (r ++ l.drop n)
+      | .error e r => .error e (r ++ l.drop n) := by
+  have hs : p.run (Slice.mk l (0 + n)) 0 = p.run (l.take n) 0 := by
+    rw [p.run_eq]; simp
+  unfold parse
+  show Result.toReply l (if _ then _ else _) = _
+  rw [hs]
+  by_cases h : l.length < n
+  · rw [ite_eq_left (by simpa using h), ite_eq_left h]; simp
+  · rw [ite_eq_right (by simpa using h), ite_eq_right h]
+    have hb := p.pos_le (l.take n)
+    rw [List.length_take] at hb
+    have hsplit : ∀ j, j ≤ n → l.drop j = (l.take n).drop j ++ l.drop n := by
+      intro j hj
+      conv => lhs; rw [← List.take_append_drop n l]
+      rw [List.drop_append_of_le_length (by simp; omega)]
+    cases hc : p.run (l.take n) 0 with
+    | ok a j =>
+      rw [hc] at hb; simp only [Result.pos_ok] at hb
+      have hj : j ≤ n := by omega
+      simp only [hc, Result.toReply_ok]
+      by_cases hjn : j = n
+      · have hnil : (l.take n).drop j = [] := by simp; omega
+        rw [ite_eq_left hnil, ite_eq_left (by omega : j = 0 + n), hjn]; rfl
+      · have hne : (l.take n).drop j ≠ [] := by simp; omega
+        rw [ite_eq_right hne, ite_eq_right (by omega : ¬ j = 0 + n), Result.toReply_error, hsplit j hj]
+    | error e j =>
+      rw [hc] at hb; simp only [Result.pos_error] at hb
+      simp only [hc, Result.toReply_error, hsplit j (by omega)]
+
+/-- `isolate n p` on exactly `n` tokens that `p` reads completely. -/
+theorem parse_isolate_append [ParseError ε] {n : Nat} {p : Parser τ ε α} {l r : List τ} {a : α}
+    (hl : l.length = n) (hp : p.parse l = .ok a []) : (isolate n p).parse (l ++ r) = .ok a r := by
+  rw [parse_isolate]
+  subst hl
+  simp [hp]
 
 /-! ## Recursion -/
 

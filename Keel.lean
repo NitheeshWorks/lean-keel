@@ -1,4 +1,5 @@
 import Keel.Parse
+import Keel.Codec
 import Keel.Proofs.Verified
 
 /-!

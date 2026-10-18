@@ -15,18 +15,6 @@ namespace Parser
 
 variable {σ τ ε α : Type} [Input σ τ]
 
-theorem parse_of_run (p : Parser τ ε α) {s : σ} {i : Nat} {a : α} {j : Nat}
-    (h : p.run s i = .ok a j) : p.parse (Input.rest s i) = .ok a (Input.rest s j) := by
-  rw [p.run_eq s i] at h
-  unfold parse
-  cases hc : p.run (Input.rest s i) 0 with
-  | ok a' j' =>
-    rw [hc] at h
-    simp only [Result.shift_ok, Result.ok.injEq] at h
-    obtain ⟨rfl, rfl⟩ := h
-    simp [Input.rest, List.drop_drop, Nat.add_comm]
-  | error e j' => rw [hc] at h; simp at h
-
 /-- Run `p` on `s` from position `i`: the value and the position after it, or
 the error and where it was detected. A success says what it means: the
 parser's list meaning on the tokens from `i` gives the same value and leaves

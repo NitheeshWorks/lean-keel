@@ -173,4 +173,9 @@ structure Parser (τ ε α : Type) where
   /-- The position reported on a list is within it. -/
   pos_le : ∀ l : List τ, (run l 0).pos ≤ l.length
 
+/-- The list semantics of a parser: what it does to a list of tokens. Every
+law in the library is stated with it. -/
+def Parser.parse {τ ε α : Type} (p : Parser τ ε α) (l : List τ) : Reply τ ε α :=
+  (p.run l 0).toReply l
+
 end Keel
