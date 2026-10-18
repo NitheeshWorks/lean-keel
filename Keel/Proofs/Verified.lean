@@ -3,6 +3,7 @@ import Keel.Specifications.Parse
 import Keel.Specifications.Codec
 import Keel.Specifications.Refine
 import Keel.Specifications.Route
+import Keel.Specifications.Regex
 
 /-!
 # The harness: one `Verified<Theory>` structure per theory
@@ -153,5 +154,26 @@ theorem theVerifiedRoute : VerifiedRoute where
   splitOnePass := PathTemplate.split_eq_splitFast
   acceptorExact c := c.acceptor_accepts
   intDigitLimit := Convertor.int_accepts_iff
+
+/-- Regular expressions: nullability and derivatives are right, the scan and
+the compiled matcher decide acceptance in every mode, and the state is
+bounded by the pattern. -/
+structure VerifiedRegex where
+  nullable : Spec.RegexNullable
+  deriveCorrect : Spec.RegexDeriveCorrect
+  acceptsIff : Spec.RegexAcceptsIff
+  compiledEq : Spec.RegexCompiledEq
+  stateBound : Spec.RegexStateBound
+  reachNext : Spec.RegexReachNext
+  compileTest : Spec.RegexCompileTest
+
+theorem theVerifiedRegex : VerifiedRegex where
+  nullable _ _ r p n := Regex.nullable_iff r p n
+  deriveCorrect _ _ _ p c r u n := Regex.derive_correct p c r u n
+  acceptsIff _ _ _ m r t := Regex.accepts_iff m r t
+  compiledEq _ _ _ _ N m t := N.accepts_eq m t
+  stateBound _ _ _ _ _ h := Regex.reach_length_le h
+  reachNext _ _ _ _ _ _ p c h := Regex.reach_next p c h
+  compileTest _ _ _ _ r m s := Regex.compile_test_iff r m s
 
 end Keel

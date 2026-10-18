@@ -47,3 +47,13 @@ module = "Keel.Route"
 upstream = "none"
 summary = "Three starlette-style routes with a typed int capture; both Allow policies; DELETE on any item is a 405"
 laws = ["Examples.Router.item_match", "Examples.Router.delete_item_405", "Keel.PathTemplate.match_urlFor", "Keel.Router.methodNotAllowed_iff", "Keel.Router.methodNotAllowed_allow_first", "Keel.Router.methodNotAllowed_allow_union"]
+
+[[example]]
+name = "OriginRegex"
+file = "examples/Examples/OriginRegex.lean"
+lean = "examples/Examples/OriginRegex.lean"
+status = "own"
+module = "Keel.Regex"
+upstream = "none"
+summary = "An origin allow-list as allow_origin_regex uses it: a three-atom dialect, fullmatch versus search on the same pattern"
+laws = ["Examples.OriginRegex.allowed_iff", "Examples.OriginRegex.evil_contains", "Keel.Regex.compile_test_iff", "Keel.Regex.accepts_full_iff", "Keel.Regex.reach_length_le"]
