@@ -2,6 +2,7 @@ import Keel.Proofs.Parse
 import Keel.Specifications.Parse
 import Keel.Specifications.Codec
 import Keel.Specifications.Refine
+import Keel.Specifications.Route
 
 /-!
 # The harness: one `Verified<Theory>` structure per theory
@@ -103,5 +104,27 @@ def theVerifiedRefine : VerifiedRefine where
   bothOkIff _ _ _ _ v w x a b := Validator.both_ok_iff v w x a b
   eachOkIff _ _ _ _ v xs ys := Validator.each_ok_iff v xs ys
   locEach _ _ _ _ v xs es h := Validator.loc_each v xs es h
+
+/-- Routing: templates round-trip, and dispatch is first match with the
+405 and 404 conditions characterised. -/
+structure VerifiedRoute where
+  matchUrlFor : Spec.MatchUrlFor
+  urlForMatch : Spec.UrlForMatch
+  firstMatch : Spec.DispatchFirstMatch
+  dispatchPartial : Spec.DispatchPartial
+  dispatchNone : Spec.DispatchNone
+  resolveFirstMatch : Spec.ResolveFirstMatch
+  methodNotAllowed : Spec.MethodNotAllowedIff
+  notFound : Spec.NotFoundIff
+
+def theVerifiedRoute : VerifiedRoute where
+  matchUrlFor t v ha hv := t.match_urlFor ha v hv
+  urlForMatch t _ _ h hc := t.urlFor_match h hc
+  firstMatch _ _ m rs r b := dispatch_found_iff m rs r b
+  dispatchPartial _ _ m rs := dispatch_partial_iff m rs
+  dispatchNone _ _ m rs := dispatch_none_iff m rs
+  resolveFirstMatch _ rs method path r v := Router.resolve_found_iff rs method path r v
+  methodNotAllowed _ rs method path := Router.methodNotAllowed_iff rs method path
+  notFound _ rs method path := Router.notFound_iff rs method path
 
 end Keel
