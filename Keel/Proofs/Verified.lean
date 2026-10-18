@@ -31,7 +31,7 @@ structure VerifiedParse where
   fix : Spec.ParseFix
   below : Spec.ParseBelow
 
-def theVerifiedParse : VerifiedParse where
+theorem theVerifiedParse : VerifiedParse where
   ext _ _ _ _ _ h := Parser.ext h
   runOfParse _ _ _ _ _ p _ _ _ _ h hi := p.run_eq_of_parse h hi
   bind _ _ _ _ := Parser.parse_bind
@@ -62,7 +62,7 @@ structure VerifiedCodec where
   nat : Spec.NatLawful
   natBE : Spec.NatBELawful
 
-def theVerifiedCodec : VerifiedCodec where
+theorem theVerifiedCodec : VerifiedCodec where
   law _ _ c _ _ hv hf := c.decode_encode hv hf
   encodeInjective _ _ c _ _ h0 ha hb h := c.encode_injective h0 ha hb h
   bytes _ c _ _ hv hf := c.decodeBytes_encodeBytes hv hf
@@ -94,7 +94,7 @@ structure VerifiedRefine where
   eachOkIff : Spec.EachOkIff
   locEach : Spec.LocEach
 
-def theVerifiedRefine : VerifiedRefine where
+theorem theVerifiedRefine : VerifiedRefine where
   validateIff _ c x := Constraint.validate_iff c x
   errorsNonempty _ c _ _ h := Constraint.validate_error_ne_nil c h
   validateAnd _ c d x := Constraint.validate_and_iff c d x
@@ -117,7 +117,7 @@ structure VerifiedRoute where
   methodNotAllowed : Spec.MethodNotAllowedIff
   notFound : Spec.NotFoundIff
 
-def theVerifiedRoute : VerifiedRoute where
+theorem theVerifiedRoute : VerifiedRoute where
   matchUrlFor t v ha hv := t.match_urlFor ha v hv
   urlForMatch t _ _ h hc := t.urlFor_match h hc
   firstMatch _ _ m rs r b := dispatch_found_iff m rs r b

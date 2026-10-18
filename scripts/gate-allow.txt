@@ -1,0 +1,2 @@
+# Justified exceptions to the verification gate, one per line: <Name> <reason>.
+# lean-keel has none: no partial, unsafe, implemented_by or extern definition.

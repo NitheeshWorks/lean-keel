@@ -32,8 +32,11 @@ def main():
         tmp = REPO / ".lake" / "trace-check.lean"; tmp.parent.mkdir(exist_ok=True)
         tmp.write_text(body)
         proc = subprocess.run(["lake", "env", "lean", str(tmp)], cwd=REPO, capture_output=True, text=True)
+        # Lean diagnostics look like `<file>:<line>:<col>: error: ...`; a
+        # statement that merely mentions `.error` is not one.
         for line in (proc.stdout + proc.stderr).splitlines():
-            if "error" in line: bad.append(line.strip())
+            if str(tmp) in line and ": error" in line: bad.append(line.strip())
+        if proc.returncode != 0 and not bad: bad.append("lean exited with an error")
     print(f"{len(rows)} requirements, {len(set(symbols))} symbols, {len(bad)} problems")
     for b in bad: print("  " + b)
     sys.exit(1 if bad else 0)

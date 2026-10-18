@@ -327,7 +327,7 @@ theorem dispatch_partial_iff : ∀ rs : List ρ,
       | none =>
         simp only [Outcome.partial.injEq, exists_eq', true_iff]
         intro r'' hr''
-        rw [(hnone.1 hd) r'' hr'']; simp [Match.IsFull]
+        rw [(hnone.1 hd) r'' hr'']; simp
     | none =>
       simp only [Match.IsFull, not_false_eq_true, true_and, reduceCtorEq, false_or]
       exact ih

@@ -66,7 +66,7 @@ theorem run_eq_of_parse {σ : Type} [Input σ τ] (p : Parser τ ε α) {s : σ}
     simp only [Result.toReply_ok, Reply.ok.injEq] at h
     obtain ⟨rfl, rfl⟩ := h
     simp only [Result.pos_ok, Input.length_rest] at hb
-    simp only [Result.shift_ok, Result.ok.injEq, true_and, List.length_drop, Input.length_rest]
+    simp only [Result.shift_ok, Result.ok.injEq, true_and, List.length_drop]
     rw [Input.size_eq] at hb hi ⊢
     omega
   | error e j => rw [hc] at h; simp at h
@@ -85,8 +85,7 @@ theorem run_eq_error_of_parse {σ : Type} [Input σ τ] (p : Parser τ ε α) {s
     simp only [Result.toReply_error, Reply.error.injEq] at h
     obtain ⟨rfl, rfl⟩ := h
     simp only [Result.pos_error, Input.length_rest] at hb
-    simp only [Result.shift_error, Result.error.injEq, true_and, List.length_drop,
-      Input.length_rest]
+    simp only [Result.shift_error, Result.error.injEq, true_and, List.length_drop]
     rw [Input.size_eq] at hb hi ⊢
     omega
 
@@ -451,7 +450,7 @@ theorem parse_isolate [ParseError ε] (n : Nat) (p : Parser τ ε α) (l : List 
     | ok a j =>
       rw [hc] at hb; simp only [Result.pos_ok] at hb
       have hj : j ≤ n := by omega
-      simp only [hc, Result.toReply_ok]
+      simp only [Result.toReply_ok]
       by_cases hjn : j = n
       · have hnil : (l.take n).drop j = [] := by simp; omega
         rw [ite_eq_left hnil, ite_eq_left (by omega : j = 0 + n), hjn]; rfl
@@ -459,7 +458,7 @@ theorem parse_isolate [ParseError ε] (n : Nat) (p : Parser τ ε α) (l : List 
         rw [ite_eq_right hne, ite_eq_right (by omega : ¬ j = 0 + n), Result.toReply_error, hsplit j hj]
     | error e j =>
       rw [hc] at hb; simp only [Result.pos_error] at hb
-      simp only [hc, Result.toReply_error, hsplit j (by omega)]
+      simp only [Result.toReply_error, hsplit j (by omega)]
 
 /-- `isolate n p` on exactly `n` tokens that `p` reads completely. -/
 theorem parse_isolate_append [ParseError ε] {n : Nat} {p : Parser τ ε α} {l r : List τ} {a : α}

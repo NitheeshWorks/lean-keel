@@ -7,42 +7,156 @@ The keel of the verified FastAPI stack: the general theories that every other
 `lean-*` repo instantiates, so a property is proved once and inherited, not
 re-proved case by case.
 
-| Module | Theory | The law, roughly |
+| Module | Theory | The law |
 |---|---|---|
-| `Keel.Codec` | lawful encoder/decoder pairs, closed under combinators | `decode (encode a ++ rest) = some (a, rest)` |
-| `Keel.Parse` | total parsers whose bind demands progress: no fuel, no `partial` | every parser terminates by construction |
-| `Keel.Refine` | constraint language, refinement types `α ∣ c`, validation | `validate c x = .ok x ↔ c.holds x` |
-| `Keel.Route` | first-match dispatch over templates with typed captures | `match (urlFor t v) = some v` |
+| `Keel.Parse` | total parsers over any token buffer: no fuel, no `partial` | `(p >>= f).parse l = (p.parse l).bind fun a r => (f a).parse r` |
+| `Keel.Codec` | lawful encoder/decoder pairs, closed under combinators | `c.decode (c.encode a ++ rest) = some (a, rest)` |
+| `Keel.Refine` | constraint language, refinement types `α ∣ c`, located validation | `c.validate x = .ok x ↔ c.holds x` |
+| `Keel.Route` | typed path templates, first-match dispatch, 405 and 404 | `t.match (t.urlFor v) = some v` |
 
-Used by [lean-json](https://github.com/NitheeshWorks/lean-json),
-[lean-multipart](https://github.com/NitheeshWorks/lean-multipart),
-[lean-itsdangerous](https://github.com/NitheeshWorks/lean-itsdangerous),
-[lean-markupsafe](https://github.com/NitheeshWorks/lean-markupsafe),
-[lean-click](https://github.com/NitheeshWorks/lean-click),
-[lean-jinja2](https://github.com/NitheeshWorks/lean-jinja2),
-[lean-httpx](https://github.com/NitheeshWorks/lean-httpx),
-[lean-pydantic](https://github.com/NitheeshWorks/lean-pydantic),
-[lean-starlette](https://github.com/NitheeshWorks/lean-starlette) and
-[lean-fastapi](https://github.com/NitheeshWorks/lean-fastapi).
+## Quickstart
 
-## What "verified" means here
+```lean
+import Keel
+open Keel
 
-* Every theorem is machine-checked. The gate (`scripts/Axioms.lean`) fails on
-  any declaration that reaches an axiom beyond `propext`, `Quot.sound` and
-  `Classical.choice`, and on any `partial`, `unsafe`, `implemented_by` or
-  `extern` definition.
-* Laws are stated once, on the abstraction, as equations or `↔` facts. Each
-  instance in a downstream repo gets them for free.
+-- Parse: a total recursive parser. `fix` needs no fuel; it runs on a
+-- ByteArray, an Array or a String, and is reasoned about on lists.
+inductive Tree where | leaf (n : Nat) | node (ts : List Tree)
+
+open Parser in
+def tree : Parser Char Parse.Error Tree := fix fun self =>
+  (do let ds ← many1 (satisfy Char.isDigit); pure (.leaf (Codec.digitsValue ds)))
+  <|> (do let _ ← token '['; let ts ← sepBy self (token ','); let _ ← token ']'; pure (.node ts))
+
+#eval (tree.parseString "[1,[22,3],[]]").isOk   -- true: a value, with the proof it is the list meaning
+
+-- Codec: built from combinators, lawful by construction.
+def field : Codec UInt8 ByteArray := Codec.bytes
+def headerCodec := Codec.delimited "\r\n" field |>.many
+
+example (lines : List ByteArray) (h : Codec.ManyValid (Codec.delimited "\r\n" field) lines) :
+    headerCodec.decode (headerCodec.encode lines) = some (lines, []) :=
+  Codec.many_lawful _ h
+
+-- Refine: constraints are types.
+structure Offer where
+  price    : Int ∣ gt 0
+  discount : Nat ∣ le 100 := ⟨0, by decide⟩
+
+def search (q : String ∣ maxLength 50 ∧ minLength 3) : String := q.val
+
+#eval ((Constraint.gt (0 : Int)).refine (-1)).isOk   -- false: one error, `failed := gt 0`
+
+-- Route: templates with typed captures, starlette's semantics.
+abbrev item := path% "/items/{item_id:int}"
+#eval item.match "/items/42"                 -- some (42, ())
+example (n : Nat) : item.match (item.urlFor (n, ())) = some (n, ()) :=
+  item.match_urlFor (by decide) _ ⟨trivial, trivial⟩
+```
+
+## What is proved
+
+Every statement below is a Lean theorem about the public functions, checked by
+the gate (`scripts/Axioms.lean`): only `propext`, `Quot.sound` and
+`Classical.choice`, no `sorry`, no `partial`, no fuel. Each has a slot in
+`Keel/Proofs/Verified.lean`.
+
+### Keel.Parse
+
+* **Every parser is total.** Not a theorem but the type: `many` and `fix`
+  recurse well-founded on the number of tokens left, and a `Parser` carries
+  the invariants (translation invariance, in-bounds positions) that make the
+  measure decrease.
+* **Parsers are their list meaning.** Two parsers that agree on every list
+  are equal, and on any buffer a parser does what its list meaning says.
+  `Parser.ext : (∀ l, p.parse l = q.parse l) → p = q`;
+  `Parser.run_eq_of_parse : p.parse (Input.rest s i) = .ok a r → i ≤ Input.size s → p.run s i = .ok a (Input.size s - r.length)`.
+* **Sequencing continues on what is left.**
+  `Parser.parse_bind : (p >>= f).parse l = (p.parse l).bind fun a r => (f a).parse r`, and the parsers form a lawful monad.
+* **Choice is committed.** `Parser.parse_orElse`: `q` runs only when `p` failed having consumed nothing.
+* **Repetition unfolds once**, continuing only after a step that consumed: `Parser.parse_many`.
+* **`takeWhile` is `List.takeWhile`.** `Parser.parse_takeWhile : (takeWhile f).parse l = .ok (l.takeWhile f) (l.dropWhile f)`.
+* **Literals and lookahead.** `parse_lit : (lit l).parse (l ++ r) = .ok () r`;
+  `parse_startsWith : (startsWith l).parse x = .ok (decide (l <+: x)) x`.
+* **Confinement.** `parse_isolate_append : l.length = n → p.parse l = .ok a [] → (isolate n p).parse (l ++ r) = .ok a r`.
+* **Recursion.** `parse_fix : (fix F).parse l = (F (below F l.length)).parse l` and
+  `parse_below_of_lt : l.length < n → (below F n).parse l = (fix F).parse l`:
+  the recursive handle is the fixpoint on every strictly shorter input.
+
+### Keel.Codec
+
+* **The codec law, on any continuation.**
+  `Codec.decode_encode : c.valid a → c.follow rest → c.decode (c.encode a ++ rest) = some (a, rest)`,
+  and its forms on bytes and strings, run on the buffer itself:
+  `decodeBytes_encodeBytes`, `decodeString_encodeString`.
+* **Encoding is injective** on valid values: `Codec.encode_injective`.
+* **Every combinator is lawful**: `seq_lawful`, `map_lawful`, `refine_lawful`,
+  `sigma_lawful` (choice by a decoded tag), `sum_lawful_inl`/`inr` (choice by
+  literal tags), `delimited_lawful`
+  (`Avoids d (c.encode a) → (delimited d c).decode (c.encode a ++ d ++ r) = some (a, r)`),
+  `lengthPrefixed_lawful`, `many_lawful`, `manyTill_lawful`.
+* **Base codecs**: `nat_lawful` (decimal, before any non-digit) and
+  `natBE_lawful` (big-endian, when the value fits).
+
+### Keel.Refine
+
+* **Validation is sound and complete.** `Constraint.validate_iff : c.validate x = .ok x ↔ c.holds x`.
+* **A failure says why.** `validate_error_ne_nil : c.validate x = .error es → es ≠ []`.
+* **Conjunction validates both.** `validate_and_iff : (c.and d).validate x = .ok x ↔ c.validate x = .ok x ∧ d.validate x = .ok x`.
+* **Refinement.** `refine_ok_iff : (∃ y, c.refine x = .ok y) ↔ c.holds x`, the value carrying its proof.
+* **Error locations compose along paths.**
+  `Validator.atPath_append : v.atPath (p ++ q) = (v.atPath q).atPath p` and
+  `prefix_loc_atPath : (v.atPath p) x = .error es → ∀ e ∈ es, p <+: Located.loc e`.
+* **Lists and pairs.** `each_ok_iff : (each v) xs = .ok ys ↔ xs.mapM v = .ok ys`;
+  `loc_each`: every error of `each` is under an element's index; `both_ok_iff`.
+
+### Keel.Route
+
+* **`match` inverts `urlFor`.**
+  `PathTemplate.match_urlFor : t.Aligned → ArgsValid t.pieces v → t.match (t.urlFor v) = some v`,
+  for segment-aligned templates (every capture is a whole segment or the tail).
+* **`urlFor` inverts `match` on canonical paths.**
+  `PathTemplate.urlFor_match : t.match path = some v → t.Canonical path → t.urlFor v = path`.
+* **First match.** `dispatch_found_iff`: dispatch finds `r` exactly when `r`
+  matches fully and no earlier route does; `Router.resolve_found_iff` for HTTP.
+* **405 iff partial.** `Router.methodNotAllowed_iff`: the router answers 405
+  exactly when no route matches the method and the path, and some route
+  matches the path; `methodNotAllowed_allow`: `Allow` is that first partial
+  route's methods, as in starlette.
+* **404 iff no path match.** `Router.notFound_iff : resolve rs method path = .notFound ↔ ∀ r ∈ rs, r.path.match path = none`.
+
+## Using Keel from a lean-* repo
+
+Add the requirement to `lakefile.toml` and `lake update Keel`:
+
+```toml
+[[require]]
+name = "Keel"
+git = "https://github.com/NitheeshWorks/lean-keel"
+rev = "main"
+```
+
+| Repo | Use | Instead of |
+|---|---|---|
+| lean-json | `Parser UInt8 ParseErr Json` with `fix` for values (`ParseError ParseErr` instance), `parse_*` laws, `Parser.run_eq_of_parse`; `Codec.nat`/`Codec.lit` for leaves | the fuel arguments, `parse_fuel_mono`, `parse_fuel_enough`, `step_progress`, the `Spec.At` byte lemmas |
+| lean-multipart | `Codec.delimited` (boundaries: `Avoids`), `Codec.many`/`manyTill`, `Parser.takeWhile` | hand-rolled `findBoundary` and `_ext` round trips |
+| lean-itsdangerous | `Codec.delimited` with `avoids_of_head_not_mem` for the separator; `Codec.natBE` for timestamps | `splitFirst_append`, `rsplit_append`, `bytesToInt_intToBytes` |
+| lean-click | `Int ∣ ge lo ∧ le hi` (IntRange), `String ∣ oneOf cs` (choice), `Constraint.validate_iff`; `dispatch` for groups | `IntBounds.contains` proofs, `choice_in_set`, `group_dispatch_first_match` |
+| lean-pydantic | `Constraint`, `α ∣ c`, `Validator` with `Located` for `ValidationError`, `loc_atPath`; supply a `Pattern` from the verified regex | its own `Constraint`/`Satisfies`/`validate_sound`/`validate_complete`/`validate_loc_prefix` |
+| lean-starlette | `PathTemplate`, `Convertor`, `path%`, `Router.resolve`, `match_urlFor`, `methodNotAllowed_iff` | its own `compile_match_url_path_for`, `route_first_match`, `partial_iff_405` |
 
 ## Getting started
 
 ```
-lake build            # library and proofs
+lake build            # library, proofs, test executables
 lake exe props        # property tests
+lake exe conformance  # starlette routing cases
 scripts/check.sh      # the whole gate, locally
 ```
 
-Toolchain: `leanprover/lean4:v4.35.0`.
+Toolchain: `leanprover/lean4:v4.35.0`. See `CONTRIBUTING.md` for the
+architecture and the deviations from starlette.
 
 ## License
 

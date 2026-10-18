@@ -13,11 +13,313 @@
 [meta]
 upstream_name = "none (original theory library)"
 
-# [[requirement]]
-# id = "..."                  # stable id, e.g. "routing.first-match"
-# upstream = "tests/test_x.py::test_y"   # or a docs section
-# title = "..."
-# status = "implemented"
-# realises = ["Keel.Foo.bar"]
-# theorem = ["Keel.Foo.bar_spec"]
-# test = ["tests/Conformance.lean::name"]
+[[requirement]]
+id = "parse.total"
+upstream = "STYLE.md section 2: total parsing"
+title = "Every parser is total: many and fix recurse well-founded on the tokens left, no fuel, no partial"
+status = "implemented"
+realises = ["Keel.Parser.many", "Keel.Parser.fix", "Keel.Parser.below"]
+theorem = ["Keel.Parser.parse_many", "Keel.Parser.parse_fix", "Keel.Parser.parse_below"]
+test = ["tests/Props.lean::Parse.fix reads nested brackets"]
+
+[[requirement]]
+id = "parse.ext"
+upstream = "STYLE.md section 2: total parsing"
+title = "A parser is determined by its meaning on lists"
+status = "implemented"
+realises = ["Keel.Parser.parse"]
+theorem = ["Keel.Parser.ext"]
+
+[[requirement]]
+id = "parse.buffers"
+upstream = "STYLE.md section 2: total parsing"
+title = "Runs on any buffer (List, Array, ByteArray, Slice) as its list meaning says"
+status = "implemented"
+realises = ["Keel.Input", "Keel.Parser.runFrom", "Keel.Parser.parseBytes", "Keel.Parser.parseString"]
+theorem = ["Keel.Parser.run_eq_of_parse", "Keel.Parser.parse_of_run"]
+test = ["tests/Props.lean::Parse.takeWhile is List.takeWhile, on a ByteArray"]
+
+[[requirement]]
+id = "parse.monad"
+upstream = "STYLE.md section 2: total parsing"
+title = "Lawful monad; sequencing continues on what is left"
+status = "implemented"
+realises = ["Keel.Parser.bind"]
+theorem = ["Keel.Parser.parse_bind", "Keel.Parser.parse_pure", "Keel.Parser.parse_map"]
+
+[[requirement]]
+id = "parse.choice"
+upstream = "STYLE.md section 2: total parsing"
+title = "Committed choice (Parsec): the alternative runs only after a failure that consumed nothing"
+status = "implemented"
+realises = ["Keel.Parser.orElse", "Keel.Parser.attempt"]
+theorem = ["Keel.Parser.parse_orElse", "Keel.Parser.parse_attempt"]
+
+[[requirement]]
+id = "parse.lit"
+upstream = "STYLE.md section 2: total parsing"
+title = "Literals and lookahead"
+status = "implemented"
+realises = ["Keel.Parser.lit", "Keel.Parser.startsWith"]
+theorem = ["Keel.Parser.parse_lit", "Keel.Parser.parse_lit_ok", "Keel.Parser.parse_startsWith"]
+test = ["tests/Props.lean::Parse.lit and startsWith agree with the prefix relation"]
+
+[[requirement]]
+id = "parse.takeWhile"
+upstream = "STYLE.md section 2: total parsing"
+title = "takeWhile is List.takeWhile"
+status = "implemented"
+realises = ["Keel.Parser.takeWhile"]
+theorem = ["Keel.Parser.parse_takeWhile"]
+test = ["tests/Props.lean::Parse.takeWhile is List.takeWhile, on a ByteArray"]
+
+[[requirement]]
+id = "parse.isolate"
+upstream = "STYLE.md section 2: total parsing"
+title = "isolate n p runs p on exactly the next n tokens, without copying"
+status = "implemented"
+realises = ["Keel.Parser.isolate"]
+theorem = ["Keel.Parser.parse_isolate", "Keel.Parser.parse_isolate_append"]
+test = ["tests/Props.lean::Parse.isolate confines a parser to n tokens"]
+
+[[requirement]]
+id = "codec.law"
+upstream = "STYLE.md section 2: Codec"
+title = "decode (encode a ++ rest) = some (a, rest) on any tolerated continuation"
+status = "implemented"
+realises = ["Keel.Codec", "Keel.Codec.decode"]
+theorem = ["Keel.Codec.decode_encode", "Keel.Codec.encode_injective"]
+
+[[requirement]]
+id = "codec.bytes"
+upstream = "STYLE.md section 2: Codec"
+title = "The law on ByteArray and String, run on the buffer"
+status = "implemented"
+realises = ["Keel.Codec.decodeBytes", "Keel.Codec.decodeString"]
+theorem = ["Keel.Codec.decodeBytes_encodeBytes", "Keel.Codec.decodeString_encodeString"]
+test = ["tests/Props.lean::Codec.natBE round-trips on any continuation"]
+
+[[requirement]]
+id = "codec.seq"
+upstream = "STYLE.md section 2: Codec"
+title = "Sequencing is lawful"
+status = "implemented"
+realises = ["Keel.Codec.seq", "Keel.Codec.left", "Keel.Codec.right"]
+theorem = ["Keel.Codec.seq_lawful"]
+test = ["tests/Props.lean::Codec.seq of fixed widths round-trips"]
+
+[[requirement]]
+id = "codec.map"
+upstream = "STYLE.md section 2: Codec"
+title = "Map along a left inverse; refine to a subtype"
+status = "implemented"
+realises = ["Keel.Codec.map", "Keel.Codec.refine"]
+theorem = ["Keel.Codec.map_lawful", "Keel.Codec.refine_lawful"]
+test = ["tests/Props.lean::Codec.map round-trips along its inverse"]
+
+[[requirement]]
+id = "codec.choice"
+upstream = "STYLE.md section 2: Codec"
+title = "Choice by a decoded tag and by literal tags"
+status = "implemented"
+realises = ["Keel.Codec.sigma", "Keel.Codec.sum"]
+theorem = ["Keel.Codec.sigma_lawful", "Keel.Codec.sum_lawful_inl", "Keel.Codec.sum_lawful_inr"]
+test = ["tests/Props.lean::Codec.sum round-trips both sides"]
+
+[[requirement]]
+id = "codec.delimited"
+upstream = "STYLE.md section 2: Codec"
+title = "Delimited fields, with the escaping side condition Avoids"
+status = "implemented"
+realises = ["Keel.Codec.delimited", "Keel.Avoids"]
+theorem = ["Keel.Codec.delimited_lawful", "Keel.Codec.avoids_of_head_not_mem"]
+test = ["tests/Props.lean::Codec.delimited + many: header lines round-trip"]
+
+[[requirement]]
+id = "codec.lengthPrefixed"
+upstream = "STYLE.md section 2: Codec"
+title = "Length-prefixed fields"
+status = "implemented"
+realises = ["Keel.Codec.lengthPrefixed"]
+theorem = ["Keel.Codec.lengthPrefixed_lawful"]
+test = ["tests/Props.lean::Codec.lengthPrefixed + manyTill: frames round-trip on any continuation"]
+
+[[requirement]]
+id = "codec.many"
+upstream = "STYLE.md section 2: Codec"
+title = "Repetition to the end and to a terminator"
+status = "implemented"
+realises = ["Keel.Codec.many", "Keel.Codec.manyTill"]
+theorem = ["Keel.Codec.many_lawful", "Keel.Codec.manyTill_lawful"]
+test = ["tests/Props.lean::Codec.lengthPrefixed + manyTill: frames round-trip on any continuation"]
+
+[[requirement]]
+id = "codec.base"
+upstream = "STYLE.md section 2: Codec"
+title = "Base codecs: decimal and big-endian naturals, raw text and bytes"
+status = "implemented"
+realises = ["Keel.Codec.nat", "Keel.Codec.natBE", "Keel.Codec.string", "Keel.Codec.bytes"]
+theorem = ["Keel.Codec.nat_lawful", "Keel.Codec.natBE_lawful"]
+test = ["tests/Props.lean::Codec.nat round-trips before a non-digit"]
+
+[[requirement]]
+id = "refine.validate"
+upstream = "STYLE.md section 2: Refinement and validation"
+title = "validate c x = .ok x ↔ c.holds x; failures always report"
+status = "implemented"
+realises = ["Keel.Constraint.validate", "Keel.Constraint.holds"]
+theorem = ["Keel.Constraint.validate_iff", "Keel.Constraint.validate_error_ne_nil"]
+test = ["tests/Props.lean::Refine.validate succeeds exactly when the constraint holds"]
+
+[[requirement]]
+id = "refine.and"
+upstream = "STYLE.md section 2: Refinement and validation"
+title = "Conjunction validates both, reporting the first failure (pydantic order)"
+status = "implemented"
+realises = ["Keel.Constraint.and"]
+theorem = ["Keel.Constraint.validate_and_iff", "Keel.Constraint.validate_and_error"]
+
+[[requirement]]
+id = "refine.notation"
+upstream = "STYLE.md section 1: alpha | c"
+title = "The refinement type alpha | c in the constraint language"
+status = "implemented"
+realises = ["Keel.Refined", "Keel.Constraint.refine"]
+theorem = ["Keel.Constraint.refine_ok_iff", "Keel.Constraint.refine_val"]
+test = ["tests/Props.lean::Refine: a string constraint and its refinement agree"]
+
+[[requirement]]
+id = "refine.loc"
+upstream = "STYLE.md section 2: Refinement and validation"
+title = "Error locations prefix-compose along paths"
+status = "implemented"
+realises = ["Keel.Validator.at", "Keel.Validator.atPath", "Keel.Located"]
+theorem = ["Keel.Validator.atPath_append", "Keel.Validator.prefix_loc_atPath", "Keel.Validator.loc_atPath"]
+
+[[requirement]]
+id = "refine.each"
+upstream = "STYLE.md section 2: Refinement and validation"
+title = "Validators of lists and pairs report every failing part, located"
+status = "implemented"
+realises = ["Keel.Validator.each", "Keel.Validator.both"]
+theorem = ["Keel.Validator.each_ok_iff", "Keel.Validator.loc_each", "Keel.Validator.both_ok_iff"]
+test = ["tests/Props.lean::Refine.each locates every error under its index"]
+
+[[requirement]]
+id = "route.convertors"
+upstream = "tests/test_routing.py::test_route_converters"
+title = "str, path, int, float and uuid convertors, lawful"
+status = "implemented"
+realises = ["Keel.Convertor.str", "Keel.Convertor.path", "Keel.Convertor.int", "Keel.Convertor.float", "Keel.Convertor.uuid"]
+theorem = ["Keel.Convertor.str_canonical", "Keel.Convertor.int_canonical_iff"]
+test = ["tests/Conformance.lean::int: /int/5 is 5 and url_path_for(5) is /int/5"]
+
+[[requirement]]
+id = "route.match_urlFor"
+upstream = "tests/test_routing.py::test_url_path_for"
+title = "match (urlFor v) = some v on aligned templates"
+status = "implemented"
+realises = ["Keel.PathTemplate.match", "Keel.PathTemplate.urlFor"]
+theorem = ["Keel.PathTemplate.match_urlFor"]
+test = ["tests/Props.lean::Route.match_urlFor for int and str captures"]
+
+[[requirement]]
+id = "route.urlFor_match"
+upstream = "tests/test_routing.py::test_route_converters"
+title = "urlFor (match p) = p on canonical paths"
+status = "implemented"
+realises = ["Keel.PathTemplate.Canonical"]
+theorem = ["Keel.PathTemplate.urlFor_match"]
+test = ["tests/Conformance.lean::uuid: canonical text round-trips"]
+
+[[requirement]]
+id = "route.compile"
+upstream = "tests/test_routing.py::test_duplicated_param_names"
+title = "Template syntax, unknown convertors and duplicated names rejected"
+status = "implemented"
+realises = ["Keel.PathTemplate.compile"]
+test = ["tests/Conformance.lean::one duplicate"]
+
+[[requirement]]
+id = "route.first_match"
+upstream = "tests/test_routing.py::test_router"
+title = "First full match wins; partial matches do not stop the search"
+status = "implemented"
+realises = ["Keel.dispatch", "Keel.Router.resolve"]
+theorem = ["Keel.dispatch_found_iff", "Keel.Router.resolve_found_iff"]
+test = ["tests/Conformance.lean::GET /users/me: the first match wins"]
+
+[[requirement]]
+id = "route.405"
+upstream = "tests/test_routing.py::test_router"
+title = "405 iff no full match and some partial match; Allow is the first partial route's methods"
+status = "implemented"
+realises = ["Keel.Router.resolve"]
+theorem = ["Keel.Router.methodNotAllowed_iff", "Keel.Router.methodNotAllowed_allow", "Keel.dispatch_partial_iff"]
+test = ["tests/Conformance.lean::POST / is 405 with Allow GET, HEAD"]
+
+[[requirement]]
+id = "route.404"
+upstream = "tests/test_routing.py::test_router"
+title = "404 iff no route matches the path"
+status = "implemented"
+realises = ["Keel.Router.resolve"]
+theorem = ["Keel.Router.notFound_iff", "Keel.dispatch_none_iff"]
+test = ["tests/Conformance.lean::GET /foo is 404"]
+
+[[requirement]]
+id = "route.float_exact"
+upstream = "tests/test_convertors.py::test_default_float_convertor"
+title = "float captures are exact decimals, not IEEE doubles (UP-029)"
+status = "deviation"
+realises = ["Keel.Convertor.Fixed"]
+test = ["tests/Conformance.lean::float: /float/25.5 and back"]
+
+[[requirement]]
+id = "route.dollar_newline"
+upstream = "starlette/routing.py::compile_path (UP-030)"
+title = "A template matches the whole path: a trailing newline is not ignored as Python's '$' does"
+status = "deviation"
+realises = ["Keel.PathTemplate.split"]
+test = ["tests/Conformance.lean::a trailing newline does not match an int route"]
+
+[[requirement]]
+id = "route.url_verbatim"
+upstream = "starlette/routing.py::replace_params (UP-031)"
+title = "urlFor inserts each value verbatim instead of chained string substitution"
+status = "deviation"
+realises = ["Keel.PathTemplate.urlFor"]
+theorem = ["Keel.PathTemplate.match_urlFor"]
+test = ["tests/Conformance.lean::a value that looks like a placeholder is kept"]
+
+[[requirement]]
+id = "route.allow_order"
+upstream = "starlette/routing.py::Route.handle (UP-027)"
+title = "Allow lists the route's methods in declaration order, not set order"
+status = "deviation"
+realises = ["Keel.Router.resolve"]
+theorem = ["Keel.Router.methodNotAllowed_allow"]
+test = ["tests/Conformance.lean::DELETE /func is 405 with the first partial route's methods"]
+
+[[requirement]]
+id = "route.greedy"
+upstream = "starlette/routing.py::compile_path"
+title = "Captures take the longest accepted text for which the rest matches; equal to Python's backtracking for the built-in convertors"
+status = "implemented"
+realises = ["Keel.PathTemplate.split"]
+theorem = ["Keel.PathTemplate.split_sound"]
+test = ["tests/Conformance.lean::PUT /users/tomchristie:disable"]
+
+[[requirement]]
+id = "route.mount_host"
+upstream = "tests/test_routing.py::test_mount_urls"
+title = "Mount, Host and websocket routes are lean-starlette's; Keel provides the template and dispatch theory they use"
+status = "excluded"
+
+[[requirement]]
+id = "refine.regex"
+upstream = "pydantic: pattern"
+title = "Keel does not fix a regular-expression language: Pattern carries a source and a matcher, which lean-pydantic supplies verified"
+status = "excluded"
+realises = ["Keel.Pattern"]
+
