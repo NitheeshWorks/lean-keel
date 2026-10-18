@@ -190,7 +190,7 @@ rev = "main"
 
 | Repo | Use | Instead of |
 |---|---|---|
-| lean-json | `Parser UInt8 ParseErr Json` with the depth-bounded `fixDepth` for values (jiter's recursion limit as `max`, `depthExceeded` mapped to `recursionLimitExceeded` in the `ParseError ParseErr` instance), `parse_*` laws, `fixDepth_eq_fix`, `Parser.run_eq_of_parse`; `Codec.nat`/`Codec.lit` for leaves | the fuel arguments, `parse_fuel_mono`, `parse_fuel_enough`, `step_progress`, the `Spec.At` byte lemmas |
+| lean-json | `Parser UInt8 ParseErr Json` with the depth-bounded `fixDepth` for values (jiter's recursion limit as `max`, `depthExceeded` mapped to `recursionLimitExceeded` in the `ParseError ParseErr` instance), `parse_*` laws, `fixDepth_ok` (with `Monotone` for the value body, by `approx`), `Parser.run_eq_of_parse`; `Codec.nat`/`Codec.lit` for leaves | the fuel arguments, `parse_fuel_mono`, `parse_fuel_enough`, `step_progress`, the `Spec.At` byte lemmas |
 | lean-multipart | `Codec.delimited` (boundaries: `Avoids`), `Codec.many`/`manyTill`, `Parser.takeWhile` | hand-rolled `findBoundary` and `_ext` round trips |
 | lean-itsdangerous | `Codec.delimited` with `avoids_of_head_not_mem` for the separator; `Codec.natBE` for timestamps | `splitFirst_append`, `rsplit_append`, `bytesToInt_intToBytes` |
 | lean-click | `Int ∣ ge lo ∧ le hi` (IntRange), `String ∣ oneOf cs` (case-sensitive `Choice`), `Constraint.pick normChoice cs` with `pick_ok_iff` (case-insensitive `Choice`: the first declared choice, as `find?`), `Constraint.validate_iff`; `dispatch` for groups | `IntBounds.contains` proofs, `choice_in_set`, `group_dispatch_first_match` |
