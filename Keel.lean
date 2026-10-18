@@ -1,6 +1,7 @@
 import Keel.Parse
 import Keel.Codec
 import Keel.Refine
+import Keel.Refine.Elab
 import Keel.Route
 import Keel.Proofs.Verified
 

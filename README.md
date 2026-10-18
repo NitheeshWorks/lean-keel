@@ -209,6 +209,15 @@ git = "https://github.com/NitheeshWorks/lean-keel"
 rev = "main"
 ```
 
+Import the theory a module needs, not more. `Keel.Parse`, `Keel.Codec`,
+`Keel.Refine` and `Keel.Route` import only Lean's `Init`: a module importing
+any of them, or all four, peaks at about 0.48 GB, less than `import Std`
+(0.75 GB). The one part that needs Lean's elaborator is
+**`Keel.Refine.Elab`**, the refined literals (`(discount : Nat ∣ le 100 := 0)`,
+`greet "anon"`). Import it, or `Keel`, which includes it (0.70 GB), only in
+modules that write refined literals. The `α ∣ c` notation itself is in
+`Keel.Refine`.
+
 | Repo | Use | Instead of |
 |---|---|---|
 | lean-json | `Parser UInt8 ParseErr Json` with the depth-bounded `fixDepth` for values (jiter's recursion limit as `max`, `depthExceeded` mapped to `recursionLimitExceeded` in the `ParseError ParseErr` instance), `parse_*` laws, `fixDepth_ok` (with `Monotone` for the value body, by `approx`), `Parser.run_eq_of_parse`; `Codec.nat`/`Codec.lit` for leaves | the fuel arguments, `parse_fuel_mono`, `parse_fuel_enough`, `step_progress`, the `Spec.At` byte lemmas |
