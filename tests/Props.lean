@@ -136,6 +136,53 @@ def roundTrip {α : Type} (c : Codec UInt8 α) (a : α) (rest : List UInt8) (eq 
 /-- `n` nested brackets. -/
 def nestedBrackets (n : Nat) : Array Char := (List.replicate n '[' ++ List.replicate n ']').toArray
 
+/-! ## Regular expressions with every assertion -/
+
+/-- A test dialect: single characters and `.`; `é` is a word character but
+not an ASCII one, so the Unicode and ASCII word assertions differ on it. -/
+inductive RxAtom where
+  | char (c : Char)
+  | any
+  deriving DecidableEq, Hashable, Repr
+
+instance : CharClass RxAtom where
+  test
+    | .char a, c => c == a
+    | .any, _ => true
+  word c := c.isAlphanum || c == '_' || c == 'é'
+
+def rxAlphabet : List Char := ['a', '_', ' ', '\n', '\r', 'é']
+
+def allAssertions : List Regex.Assertion :=
+  [.start, .finish, .wordBoundary, .notWordBoundary, .wordStart, .wordEnd, .lineStart, .lineEnd,
+    .lineStartCRLF, .lineEndCRLF, .wordBoundaryAscii, .notWordBoundaryAscii, .wordStartAscii,
+    .wordEndAscii, .wordStartHalf, .wordEndHalf, .wordStartHalfAscii, .wordEndHalfAscii]
+
+def Rng.regex (r : Rng) : Nat → Regex RxAtom × Rng
+  | 0 =>
+    let (k, r) := r.nat 4
+    if k == 0 then let (n, r) := r.nat allAssertions.length; (.assert (allAssertions.getD n .start), r)
+    else if k == 1 then (.cls .any, r)
+    else let (c, r) := r.char rxAlphabet; (.cls (.char c), r)
+  | d + 1 =>
+    let (k, r) := r.nat 5
+    if k == 0 then r.regex 0
+    else if k == 1 then let (a, r) := r.regex d; let (b, r) := r.regex d; (.alt a b, r)
+    else if k == 2 then let (a, r) := r.regex d; (.star a, r)
+    else let (a, r) := r.regex d; let (b, r) := r.regex d; (.cat a b, r)
+
+def rxModes : List Regex.Mode := [.search, .prefix, .full]
+
+/-- A pattern, a mode and a text (sometimes past `cacheFrom`, so the cached
+path runs). -/
+def Rng.rxCase (r : Rng) : (Regex RxAtom × Regex.Mode × String) × Rng :=
+  let (re, r) := r.regex 4
+  let (mi, r) := r.nat 3
+  let (long, r) := r.nat 4
+  let (n, r) := r.nat (if long == 0 then 400 else 12)
+  let (cs, r) := r.list n (fun r => r.char rxAlphabet)
+  ((re, rxModes.getD mi .search, String.ofList cs), r)
+
 def properties : List Property := [
   probe "Parse.fixDepth: 10^6 nested brackets fail with depthExceeded, natively, no crash"
     (fun _ => match treeP.runFrom (nestedBrackets 1000000) 0 with
@@ -321,7 +368,11 @@ def properties : List Property := [
       | .found r _ => r.endpoint == method.toLower
       | .methodNotAllowed _ allow => method == "DELETE" && allow == ["GET", "PUT", "POST"]
       | .notFound => false))
-    toString
+    toString,
+  prop "Regex.compile: the compiled tables are built and agree with the scan, every assertion, every mode"
+    Rng.rxCase
+    (fun (re, m, t) => (Regex.Nfa.build re).isSome && (re.compile m).test t == re.accepts m t.toList)
+    (fun (re, m, t) => s!"{reprStr re} {reprStr m} {reprStr t}")
 ]
 
 def main (args : List String) : IO UInt32 := do

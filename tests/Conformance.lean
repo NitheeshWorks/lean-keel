@@ -102,6 +102,87 @@ def outcomeWith {α : Type} [ToString α] (policy : AllowPolicy) (rs : List (Rou
   | .methodNotAllowed _ allow => s!"405 {allow}"
   | .notFound => "404"
 
+/-! ### Regex assertions, against Rust's `regex`
+
+The line, CRLF-line, ASCII-word and half-boundary assertions read as Rust's
+`regex` 1.12 (pydantic-core's engine, `upstream-spec/pydantic-core/Cargo.toml`)
+reads `(?m)^ $`, `(?mR)^ $`, `(?-u:\b \B \< \>)` and `\b{start-half}`,
+`\b{end-half}`: each expectation is `is_match` there, run through
+`str_schema(pattern=..., regex_engine='rust-regex')`. The test dialect has
+single characters and Unicode word characters (`é` among them). -/
+
+inductive RxAtom where
+  | char (c : Char)
+  deriving DecidableEq, Hashable, Repr
+
+instance : CharClass RxAtom where
+  test | .char a, c => c == a
+  word c := c.isAlphanum || c == '_' || c == 'é'
+
+/-- A pattern as a sequence of characters and assertions. -/
+inductive RxPiece where
+  | c (ch : Char)
+  | a (x : Regex.Assertion)
+
+def RxPiece.term : RxPiece → Regex RxAtom
+  | .c ch => .cls (.char ch)
+  | .a x => .assert x
+
+def rxSeq (ps : List RxPiece) : Regex RxAtom := ps.foldr (fun p r => .cat p.term r) .eps
+
+/-- Rust's `is_match` of `pat` on `text` is `expect`: the scan and the
+compiled matcher (whose tables must build) both say so. -/
+def rust (pat : String) (ps : List RxPiece) (text : String) (expect : Bool) : Case :=
+  ⟨s!"regex 1.12 is_match {pat}", s!"{pat} on {reprStr text}",
+    check (let r := rxSeq ps
+      (Regex.Nfa.build r).isSome && r.accepts .search text.toList == expect && (r.compile).test text == expect)⟩
+
+def rep (s : String) (n : Nat) : String := String.join (List.replicate n s)
+
+open RxPiece Regex.Assertion in
+def rxCases : List Case := [
+  rust "(?m)^b" [a lineStart, c 'b'] "a\nb" true,
+  rust "(?m)^b" [a lineStart, c 'b'] "ab" false,
+  rust "(?m)a$" [c 'a', a lineEnd] "a\nb" true,
+  rust "(?m)a$" [c 'a', a lineEnd] "a\r\n" false,
+  rust "(?m)^$" [a lineStart, a lineEnd] "" true,
+  rust "(?m)\\n^" [c '\n', a lineStart] "\n" true,
+  rust "(?m)\\r^" [c '\r', a lineStart] "\rx" false,
+  rust "(?m)^b" [a lineStart, c 'b'] (rep "a\n" 200 ++ "b") true,
+  rust "(?m)^b" [a lineStart, c 'b'] (rep "a\n" 200 ++ "ab") false,
+  rust "(?mR)^b" [a lineStartCRLF, c 'b'] "a\rb" true,
+  rust "(?mR)^\\n" [a lineStartCRLF, c '\n'] "\r\n" false,
+  rust "(?mR)^\\n" [a lineStartCRLF, c '\n'] "\n" true,
+  rust "(?mR)\\r^" [c '\r', a lineStartCRLF] "\r\n" false,
+  rust "(?mR)\\r^" [c '\r', a lineStartCRLF] "\rx" true,
+  rust "(?mR)\\r$" [c '\r', a lineEndCRLF] "\r\n" false,
+  rust "(?mR)\\r$" [c '\r', a lineEndCRLF] "\r" true,
+  rust "(?mR)\\r$" [c '\r', a lineEndCRLF] "\rx" false,
+  rust "(?mR)a$" [c 'a', a lineEndCRLF] "a\r\n" true,
+  rust "(?mR)\\n$" [c '\n', a lineEndCRLF] "\r\n" true,
+  rust "(?mR)\\n$" [c '\n', a lineEndCRLF] "x\n" true,
+  rust "(?mR)\\r$" [c '\r', a lineEndCRLF] (rep "\r\n" 200) false,
+  rust "(?mR)\\r$" [c '\r', a lineEndCRLF] (rep "\r\n" 200 ++ "\r") true,
+  rust "(?-u:\\b)é" [a wordBoundaryAscii, c 'é'] " é" false,
+  rust "\\bé" [a wordBoundary, c 'é'] " é" true,
+  rust "(?-u:\\B)é" [a notWordBoundaryAscii, c 'é'] " é" true,
+  rust "\\Bé" [a notWordBoundary, c 'é'] " é" false,
+  rust "(?-u:\\<)a" [a wordStartAscii, c 'a'] "éa" true,
+  rust "\\<a" [a wordStart, c 'a'] "éa" false,
+  rust "a(?-u:\\>)" [c 'a', a wordEndAscii] "aé" true,
+  rust "a\\>" [c 'a', a wordEnd] "aé" false,
+  rust "\\b{start-half}b" [a wordStartHalf, c 'b'] "ab" false,
+  rust "\\b{start-half}b" [a wordStartHalf, c 'b'] " b" true,
+  rust "\\b{start-half} " [a wordStartHalf, c ' '] "  " true,
+  rust "a\\b{end-half}" [c 'a', a wordEndHalf] "ab" false,
+  rust "a\\b{end-half}" [c 'a', a wordEndHalf] "a " true,
+  rust "a\\b{end-half}" [c 'a', a wordEndHalf] "a" true,
+  rust "a(?-u:\\b{end-half})" [c 'a', a wordEndHalfAscii] "aé" true,
+  rust "a\\b{end-half}" [c 'a', a wordEndHalf] "aé" false,
+  rust "(?-u:\\b{start-half})a" [a wordStartHalfAscii, c 'a'] "éa" true,
+  rust "\\b{start-half}a" [a wordStartHalf, c 'a'] "éa" false
+]
+
 def cases : List Case := [
   -- tests/test_routing.py::test_router
   ⟨"tests/test_routing.py::test_router", "GET / runs the homepage", check (outcome app "GET" "/" == "Hello, world")⟩,
@@ -209,9 +290,9 @@ def cases : List Case := [
 
 def main : IO UInt32 := do
   let mut failures := 0
-  for c in cases do
+  for c in cases ++ rxCases do
     let ok ← try c.run catch e => do IO.println s!"      {e}"; pure false
     IO.println s!"{if ok then "ok  " else "FAIL"}  {c.name}  [{c.upstream}]"
     unless ok do failures := failures + 1
-  IO.println s!"{cases.length} cases, {failures} failing"
+  IO.println s!"{cases.length + rxCases.length} cases, {failures} failing"
   return if failures == 0 then 0 else 1

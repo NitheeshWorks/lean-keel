@@ -232,11 +232,9 @@ variable {r : Regex κ} (N : Nfa r) (m : Mode)
 /-- The terms the numbers in `S` stand for. -/
 def Den (S : List Nat) (T : List (Regex κ)) : Prop := ∀ q, q ∈ T ↔ ∃ j ∈ S, N.terms[j]? = some q
 
-omit [CharClass κ] in
 theorem some_of_lt {j : Nat} (h : j < N.terms.size) : ∃ t, N.terms[j]? = some t :=
   ⟨N.terms[j], by simp [h]⟩
 
-omit [CharClass κ] in
 theorem lt_of_some {j : Nat} {t : Regex κ} (h : N.terms[j]? = some t) : j < N.terms.size := by
   rcases Nat.lt_or_ge j N.terms.size with h' | h'
   · exact h'
@@ -272,14 +270,14 @@ theorem any_fin {S : List Nat} {T : List (Regex κ)} (hd : N.Den S T) (p : Optio
     split at hn
     · rename_i hlt
       obtain ⟨t, ht⟩ := N.some_of_lt hlt
-      rw [getD2, pcode, N.hFin j t ht] at hn
+      rw [getD2, N.pcode_eq, N.hFin j t ht] at hn
       exact ⟨t, (hd t).2 ⟨j, hj, ht⟩, by rw [nullable_eq, ctx_none]; exact hn⟩
     · cases hn
   · rintro ⟨q, hq, hn⟩
     obtain ⟨j, hj, ht⟩ := (hd q).1 hq
     refine ⟨j, hj, ?_⟩
     unfold finAt
-    simp only [N.lt_of_some ht, ↓reduceIte]; rw [getD2, pcode, N.hFin j q ht]
+    simp only [N.lt_of_some ht, ↓reduceIte]; rw [getD2, N.pcode_eq, N.hFin j q ht]
     rw [nullable_eq, ctx_none] at hn; exact hn
 
 /-- One term's numbered derivatives stand for its partial derivatives. -/
