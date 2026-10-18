@@ -1,0 +1,3 @@
+lean-keel is original work. It ports no upstream project; it holds the general
+theories (codecs, total parsing, refinement and validation, routing) that the
+other lean-* repos of the verified FastAPI stack instantiate.
