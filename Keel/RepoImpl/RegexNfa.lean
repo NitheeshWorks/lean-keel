@@ -8,7 +8,11 @@ import Std.Data.HashMap.Lemmas
 work once per pattern: it numbers the pattern and its partial derivatives
 (`PD r`, at most one per character class), and for each term and context
 slot stores its linear form (`lin`: each derivative with the class that
-guards it) with the derivatives as numbers, and its nullability. Matching
+guards it) with the derivatives as numbers, and its nullability. A context
+is what the assertions read of the characters on either side (`Side`); a
+slot packs only the bits the pattern's assertions read, and a term's row is
+computed only over the bits it reaches before its first character
+(`reads`, `lin_agree`), then shared across the slots that agree on them. Matching
 (`Nfa.run`) keeps a set of term numbers: per character, one class test per
 live edge and an array of seen flags; no term is built, hashed or compared.
 Within one call, the sets met are numbered and each step is cached

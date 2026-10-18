@@ -131,6 +131,26 @@ routing tests.
   `.firstPartial`, the default, is starlette's behaviour (the first partially
   matching route's methods, UP-027); `.unionOfPartials` is the deduplicated
   union in route order. lean-starlette chooses.
+* **Regex: assertions read the two neighbouring characters, nothing more.**
+  Each `Assertion` is a Boolean function of the character before and the one
+  after (`Assertion.holds`), which covers Rust's `(?m)` and `(?mR)` line
+  anchors (the CRLF ones never hold between the `\r` and `\n` of `\r\n`),
+  `(?-u)` word boundaries and the half boundaries. The ASCII word characters
+  are fixed (`asciiWord`, `[0-9A-Za-z_]`); the dialect's own are
+  `CharClass.word`. The conformance cases check each against Rust's `regex`
+  1.12, through pydantic-core.
+* **Regex: tables only as wide as the context the pattern reads.** A
+  context is five bits per side (`Side`: end, word, ASCII word, `\n`, `\r`).
+  `Nfa.build` takes the bits the terms' assertions read (`masks`), packs
+  only those into a slot (`code`, `slot`), and computes each term's row over
+  the bits it reaches before its first character (`reads`, `within`;
+  `lin_agree` and `nullB_agree` say nothing else matters), sharing it across
+  the pattern's slots (`spread`). So adding assertion kinds cost the existing
+  patterns nothing, and a pattern reading every bit pays per term only for
+  what that term reads. The per-character slot comes from 128-entry tables
+  for ASCII characters (`Nfa.pcodes`, `ncodes`, with their invariants as
+  fields), so the common case calls neither `CharClass.word` nor the bit
+  packing.
 
 ## Deviations from starlette
 
@@ -146,7 +166,11 @@ routing tests.
 * `tests/Props.lean`: seeded properties, one or more per combinator, running
   on `ByteArray`, `Array` and `String` buffers; under a second.
 * `tests/Conformance.lean`: starlette's routing and convertor tests that
-  concern templates and dispatch, each naming its upstream test.
+  concern templates and dispatch, each naming its upstream test; and the
+  regex assertions against Rust's `regex` (`is_match`, through
+  pydantic-core), on the scan and the compiled matcher. `tests/Props.lean`
+  compares the compiled matcher (cached path included) with the scan on
+  random patterns with every assertion, in every mode.
 * `examples/`: one worked example per theory (`examples/MANIFEST.toml`),
   built by default, gated by `scripts/Axioms.lean Examples`, and run by
   `lake exe examples`. An example that needs a workaround is an API bug: fix

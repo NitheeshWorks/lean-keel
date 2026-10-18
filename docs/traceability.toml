@@ -410,6 +410,15 @@ theorem = ["Keel.Regex.nullable_iff", "Keel.Regex.accepts_full_iff"]
 test = ["examples/Examples/OriginRegex.lean"]
 
 [[requirement]]
+id = "regex.assertions"
+upstream = "pydantic-core regex (Rust regex crate 1.12): (?m) and (?mR) ^ $, (?-u) word boundaries, \\b{start-half} and \\b{end-half}"
+title = "Line, CRLF-line, ASCII-word and half-boundary assertions, each read from the characters on either side"
+status = "implemented"
+realises = ["Keel.Regex.Assertion", "Keel.Regex.Assertion.holds", "Keel.Regex.asciiWord", "Keel.Regex.Assertion.holdsB", "Keel.Regex.Assertion.reads"]
+theorem = ["Keel.Regex.Assertion.holds_eq", "Keel.Regex.Assertion.holdsB_agree", "Keel.Regex.nullable_iff", "Keel.Regex.accepts_iff", "Keel.Regex.compile_test_iff"]
+test = ["tests/Conformance.lean::(?mR)^\\n on \"\\r\\n\"", "tests/Props.lean::Regex.compile: the compiled tables are built and agree with the scan, every assertion, every mode"]
+
+[[requirement]]
 id = "regex.derivatives"
 upstream = "pydantic-core regex (Rust regex crate)"
 title = "Matching by Antimirov partial derivatives with no backtracking: the scan decides acceptance, and its state is bounded by the pattern"
@@ -424,5 +433,5 @@ upstream = "pydantic-core regex (Rust regex crate)"
 title = "A pattern compiles once to numbered linear-form tables with a per-call step cache; the compiled matcher is the scan"
 status = "implemented"
 realises = ["Keel.Regex.Nfa.build", "Keel.Regex.Nfa.accepts", "Keel.Regex.compile", "Keel.Regex.Matcher"]
-theorem = ["Keel.Regex.Nfa.accepts_eq", "Keel.Regex.Nfa.crun_eq", "Keel.Regex.compile_test_iff"]
-test = ["examples/Examples/OriginRegex.lean"]
+theorem = ["Keel.Regex.Nfa.accepts_eq", "Keel.Regex.Nfa.crun_eq", "Keel.Regex.compile_test_iff", "Keel.Regex.lin_agree", "Keel.Regex.nullB_agree", "Keel.Regex.Nfa.slot_eq"]
+test = ["examples/Examples/OriginRegex.lean", "tests/Props.lean::Regex.compile: the compiled tables are built and agree with the scan, every assertion, every mode"]
