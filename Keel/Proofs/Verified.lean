@@ -1,6 +1,7 @@
 import Keel.Proofs.Parse
 import Keel.Specifications.Parse
 import Keel.Specifications.Codec
+import Keel.Specifications.Refine
 
 /-!
 # The harness: one `Verified<Theory>` structure per theory
@@ -78,5 +79,29 @@ def theVerifiedCodec : VerifiedCodec where
   manyTill _ _ _ c term _ _ h := Codec.manyTill_lawful c term h
   nat n _ hr := Codec.nat_lawful n hr
   natBE w n r h := Codec.natBE_lawful w n r h
+
+/-- Refinement and validation: soundness and completeness, and the
+location laws of validators. -/
+structure VerifiedRefine where
+  validateIff : Spec.ValidateIff
+  errorsNonempty : Spec.ValidateErrorsNonempty
+  validateAnd : Spec.ValidateAnd
+  refineIff : Spec.RefineIff
+  atPathAppend : Spec.AtPathAppend
+  locAtPath : Spec.LocAtPath
+  bothOkIff : Spec.BothOkIff
+  eachOkIff : Spec.EachOkIff
+  locEach : Spec.LocEach
+
+def theVerifiedRefine : VerifiedRefine where
+  validateIff _ c x := Constraint.validate_iff c x
+  errorsNonempty _ c _ _ h := Constraint.validate_error_ne_nil c h
+  validateAnd _ c d x := Constraint.validate_and_iff c d x
+  refineIff _ c x := Constraint.refine_ok_iff c x
+  atPathAppend _ _ _ _ p q v := Validator.atPath_append p q v
+  locAtPath _ _ _ _ p v x es h := Validator.prefix_loc_atPath p v x es h
+  bothOkIff _ _ _ _ v w x a b := Validator.both_ok_iff v w x a b
+  eachOkIff _ _ _ _ v xs ys := Validator.each_ok_iff v xs ys
+  locEach _ _ _ _ v xs es h := Validator.loc_each v xs es h
 
 end Keel
