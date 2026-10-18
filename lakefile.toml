@@ -1,6 +1,6 @@
 name = "Keel"
 version = "0.1.0"
-defaultTargets = ["Keel", "props", "conformance"]
+defaultTargets = ["Keel", "props", "conformance", "Examples", "examples"]
 
 # The verified library. Everything under Keel/ except Transport.lean is a
 # total function and the proof surface; see CONTRIBUTING.md.
@@ -19,5 +19,14 @@ root = "tests.Props"
 name = "conformance"
 root = "tests.Conformance"
 
+# Worked examples, one per theory (examples/MANIFEST.toml): built by default,
+# run with `lake exe examples`.
+[[lean_lib]]
+name = "Examples"
+srcDir = "examples"
+roots = ["Examples"]
 
-
+[[lean_exe]]
+name = "examples"
+root = "Examples.Main"
+srcDir = "examples"

@@ -365,3 +365,19 @@ status = "implemented"
 realises = ["Keel.AllowPolicy", "Keel.Router.partialMethods"]
 theorem = ["Keel.Router.methodNotAllowed_allow_first", "Keel.Router.methodNotAllowed_allow_union"]
 test = ["tests/Conformance.lean::unionOfPartials lists every partial route's methods, once"]
+[[requirement]]
+id = "refine.model"
+upstream = "STYLE.md section 2: errors compose along paths"
+title = "One located error type for a model's fields of any type; fields validated under their keys"
+status = "implemented"
+realises = ["Keel.Refine.Issue", "Keel.Validator.check", "Keel.Validator.field", "Keel.Validator.map", "Keel.Constraint.kind"]
+theorem = ["Keel.Validator.check_ok_iff", "Keel.Validator.loc_check", "Keel.Validator.map_ok_iff", "Keel.Validator.map_error_iff"]
+test = ["examples/Examples/Offer.lean::validate_errors_located"]
+
+[[requirement]]
+id = "examples"
+upstream = "none"
+title = "One worked example per theory, each stating the laws it inherits"
+status = "implemented"
+realises = ["Keel.Route.matches_of_match", "Keel.Codec.avoids_cons_of_not_mem"]
+test = ["examples/MANIFEST.toml", "examples/Examples/HeaderCodec.lean", "examples/Examples/NestedLists.lean", "examples/Examples/Offer.lean", "examples/Examples/Router.lean"]

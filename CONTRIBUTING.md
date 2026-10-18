@@ -146,6 +146,11 @@ routing tests.
   on `ByteArray`, `Array` and `String` buffers; under a second.
 * `tests/Conformance.lean`: starlette's routing and convertor tests that
   concern templates and dispatch, each naming its upstream test.
+* `examples/`: one worked example per theory (`examples/MANIFEST.toml`),
+  built by default, gated by `scripts/Axioms.lean Examples`, and run by
+  `lake exe examples`. An example that needs a workaround is an API bug: fix
+  the API (`avoids_cons_of_not_mem`, `Refine.Issue`/`Validator.field`, and
+  `Route.matches_of_match` came from writing them).
 * `tests/pbt/`: a separate Lake package, the one place an external dependency
   (`plausible`) is taken.
 

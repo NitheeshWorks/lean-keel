@@ -1,0 +1,36 @@
+# Worked examples, one per theory. lean-keel has no upstream, so every
+# example is its own (upstream = "none"). Each states the laws it inherits.
+# Built by `lake build`, gated by `scripts/Axioms.lean Examples`, and run by
+# `lake exe examples` in scripts/check.sh and CI.
+
+[[example]]
+name = "HeaderCodec"
+file = "examples/Examples/HeaderCodec.lean"
+module = "Keel.Codec"
+upstream = "none"
+summary = "A header block: name ': ' value in two-byte length frames, ended by 00 00; round-trips for every header list"
+laws = ["Examples.HeaderCodec.roundTrip", "Keel.Codec.manyTill_lawful", "Keel.Codec.lengthPrefixed_lawful", "Keel.Codec.delimited_lawful", "Keel.Codec.seq_lawful"]
+
+[[example]]
+name = "NestedLists"
+file = "examples/Examples/NestedLists.lean"
+module = "Keel.Parse"
+upstream = "none"
+summary = "Nested lists of naturals with a depth-bounded recursive parser; 10^6 nesting fails cleanly"
+laws = ["Examples.NestedLists.tree_ok", "Examples.NestedLists.body_monotone", "Keel.Parser.fixDepth_ok", "Keel.Parser.fixDepth_eq_fix", "Keel.Parser.parse_fixDepth_zero"]
+
+[[example]]
+name = "Offer"
+file = "examples/Examples/Offer.lean"
+module = "Keel.Refine"
+upstream = "none"
+summary = "STYLE.md's Offer: refined fields with a literal default, validated from raw input with errors located under each field"
+laws = ["Examples.Offer.validate_ok_iff", "Examples.Offer.validate_errors_located", "Keel.Validator.check_ok_iff", "Keel.Validator.loc_check", "Keel.Validator.both_ok_iff"]
+
+[[example]]
+name = "Router"
+file = "examples/Examples/Router.lean"
+module = "Keel.Route"
+upstream = "none"
+summary = "Three starlette-style routes with a typed int capture; both Allow policies; DELETE on any item is a 405"
+laws = ["Examples.Router.item_match", "Examples.Router.delete_item_405", "Keel.PathTemplate.match_urlFor", "Keel.Router.methodNotAllowed_iff", "Keel.Router.methodNotAllowed_allow_first", "Keel.Router.methodNotAllowed_allow_union"]

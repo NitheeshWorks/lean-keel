@@ -140,6 +140,10 @@ theorem avoids_of_head_not_mem {d l : List τ} {x : τ} (hd : d.head? = some x) 
   rw [List.getElem_append_left hk] at hget
   exact hx (hget ▸ List.getElem_mem hk)
 
+/-- A delimiter `x :: d` is avoided by any encoding without `x`. -/
+theorem avoids_cons_of_not_mem {x : τ} {d l : List τ} (hx : x ∉ l) : Avoids (x :: d) l :=
+  avoids_of_head_not_mem rfl hx
+
 /-- Two tags that differ in their first token are incomparable. -/
 theorem incomparable_of_head_ne {t u : τ} {l m : List τ} (h : t ≠ u) :
     Incomparable (t :: l) (u :: m) := by

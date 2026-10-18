@@ -15,6 +15,7 @@ lake build
 
 echo "== verification gate =="
 lake env lean --run scripts/Axioms.lean "$LIB"
+lake env lean --run scripts/Axioms.lean Examples
 
 [[ "${1:-}" == "--quick" ]] && exit 0
 
@@ -23,6 +24,9 @@ lake exe props
 
 echo "== conformance =="
 lake exe conformance
+
+echo "== examples =="
+lake exe examples > /dev/null
 
 echo "== traceability =="
 python3 scripts/traceability-check.py

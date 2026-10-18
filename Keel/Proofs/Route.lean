@@ -315,6 +315,16 @@ namespace Route
 
 variable {α : Type}
 
+/-- How a route matches, from how its template matches the path. -/
+theorem matches_of_match (r : Route α) {method path : String} {v : Args r.path.pieces}
+    (h : r.path.match path = some v) :
+    r.matches method path = if r.allows method then .full v else .partial := by
+  simp only [Route.matches]; rw [h]
+
+theorem matches_of_match_none (r : Route α) {method path : String} (h : r.path.match path = none) :
+    r.matches method path = .none := by
+  simp only [Route.matches]; rw [h]
+
 theorem matches_full_iff (r : Route α) (method path : String) (v : Args r.path.pieces) :
     r.matches method path = .full v ↔ r.path.match path = some v ∧ r.allows method = true := by
   simp only [Route.matches]

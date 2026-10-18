@@ -69,6 +69,19 @@ example (n : Nat) : item.match (item.urlFor (n, ())) = some (n, ()) :=
   item.match_urlFor (by decide) _ ⟨trivial, trivial⟩
 ```
 
+## Examples
+
+`examples/` has one worked example per theory, each with the laws it
+inherits proved for it (listed in `examples/MANIFEST.toml`; `lake exe
+examples` runs them all):
+
+| Example | Theory | What it shows |
+|---|---|---|
+| `HeaderCodec` | `Keel.Codec` | a length-prefixed header list built from combinators; `roundTrip` for every header list, the side conditions carried by the field types |
+| `NestedLists` | `Keel.Parse` | a recursive parser with `fixDepth`; `tree_ok` (agrees with `fix` whenever it succeeds); 10^6 nesting fails with `depthExceeded` |
+| `Offer` | `Keel.Refine` | STYLE.md's `Offer`, a literal default, validation with errors located under each field (`validate_errors_located`) |
+| `Router` | `Keel.Route` | a router with a typed capture, both `Allow` policies, and `DELETE` on any item proved a 405 |
+
 ## What is proved
 
 Every statement below is a Lean theorem about the public functions, checked by
@@ -138,6 +151,9 @@ the gate (`scripts/Axioms.lean`): only `propext`, `Quot.sound` and
 * **Error locations compose along paths.**
   `Validator.atPath_append : v.atPath (p ++ q) = (v.atPath q).atPath p` and
   `prefix_loc_atPath : (v.atPath p) x = .error es → ∀ e ∈ es, p <+: Located.loc e`.
+* **Models.** `Refine.Issue` is one located error type for fields of any type;
+  `Validator.field k get v` validates a field under its key, `Validator.check`
+  a constraint (`check_ok_iff`, `loc_check`).
 * **Lists and pairs.** `each_ok_iff : (each v) xs = .ok ys ↔ xs.mapM v = .ok ys`;
   `loc_each`: every error of `each` is under an element's index; `both_ok_iff`.
 
@@ -187,6 +203,7 @@ rev = "main"
 lake build            # library, proofs, test executables
 lake exe props        # property tests
 lake exe conformance  # starlette routing cases
+lake exe examples     # the worked examples
 scripts/check.sh      # the whole gate, locally
 ```
 
