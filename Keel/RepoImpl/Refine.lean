@@ -1,4 +1,5 @@
 import Keel.DataTypes.Refine
+import Lean
 
 /-!
 # Refinement: meaning, validation, validators, notation
@@ -32,6 +33,7 @@ def holds : Constraint α → α → Prop
   | maxLength n, x => Sized.size x ≤ n
   | pattern p, x => p.test (Textual.text x) = true
   | oneOf cs, x => x ∈ cs
+  | oneOfBy norm cs, x => ∃ c ∈ cs, norm c = norm x
   | and c d, x => c.holds x ∧ d.holds x
   | or c d, x => c.holds x ∨ d.holds x
   | not c, x => ¬ c.holds x
@@ -47,6 +49,7 @@ instance decHolds : (c : Constraint α) → (x : α) → Decidable (c.holds x)
   | maxLength _, _ => Nat.decLe _ _
   | pattern _, _ => instDecidableEqBool _ _
   | @oneOf _ _ cs, x => List.instDecidableMemOfLawfulBEq x cs
+  | @oneOfBy _ _ norm cs, x => decidable_of_iff (cs.any fun c => decide (norm c = norm x) = true) (by simp [holds])
   | and c d, x =>
     match decHolds c x, decHolds d x with
     | isTrue h1, isTrue h2 => isTrue ⟨h1, h2⟩
@@ -131,36 +134,73 @@ end Validator
 
 /-! ## Notation: `α ∣ c` -/
 
-/-- The constraint language, as syntax: atoms (`gt 0`, `maxLength 50`, a
-constraint-valued term), `∧`, `∨`, `¬`, parentheses. -/
-declare_syntax_cat refinement
+/-- The constraint language, as syntax: the atoms (`gt 0`, `maxLength 50`,
+`oneOf ["a", "b"]`, …), `∧`, `∨`, `¬` and parentheses. Atom names are
+non-reserved keywords, so they stay usable as identifiers elsewhere. -/
+declare_syntax_cat refinement (behavior := both)
 syntax:30 refinement:31 " ∨ " refinement:30 : refinement
 syntax:35 refinement:36 " ∧ " refinement:35 : refinement
 syntax:max "¬" refinement:max : refinement
 syntax:max "(" refinement ")" : refinement
-syntax:max ident (ppSpace colGt term:max)* : refinement
+syntax:max (name := refineGt) &"gt" term:max : refinement
+syntax:max (name := refineGe) &"ge" term:max : refinement
+syntax:max (name := refineLt) &"lt" term:max : refinement
+syntax:max (name := refineLe) &"le" term:max : refinement
+syntax:max (name := refineMultipleOf) &"multipleOf" term:max : refinement
+syntax:max (name := refineMinLength) &"minLength" term:max : refinement
+syntax:max (name := refineMaxLength) &"maxLength" term:max : refinement
+syntax:max (name := refinePattern) &"pattern" term:max : refinement
+syntax:max (name := refineOneOf) &"oneOf" term:max : refinement
+syntax:max (name := refineOneOfBy) &"oneOfBy" term:max term:max : refinement
 
-/-- The atoms of the constraint language, as written inside `α ∣ …`. -/
-def atomNames : List Lean.Name :=
-  [`gt, `ge, `lt, `le, `multipleOf, `minLength, `maxLength, `pattern, `oneOf]
+open Lean in
+/-- Each atom's syntax and the constructor it stands for. -/
+def refinementAtoms : List (Name × Name) :=
+  [(``refineGt, ``Constraint.gt), (``refineGe, ``Constraint.ge), (``refineLt, ``Constraint.lt),
+   (``refineLe, ``Constraint.le), (``refineMultipleOf, ``Constraint.multipleOf),
+   (``refineMinLength, ``Constraint.minLength), (``refineMaxLength, ``Constraint.maxLength),
+   (``refinePattern, ``Constraint.pattern), (``refineOneOf, ``Constraint.oneOf),
+   (``refineOneOfBy, ``Constraint.oneOfBy)]
 
 /-- Internal: a `refinement` as a `Constraint` term. -/
 syntax "refinement% " refinement : term
 
+open Lean in
 macro_rules
   | `(refinement% $a ∨ $b) => `(Constraint.or (refinement% $a) (refinement% $b))
   | `(refinement% $a ∧ $b) => `(Constraint.and (refinement% $a) (refinement% $b))
   | `(refinement% ¬ $a) => `(Constraint.not (refinement% $a))
   | `(refinement% ($a)) => `(refinement% $a)
-  | `(refinement% $f:ident $args:term*) =>
-    if atomNames.contains f.getId then
-      `($(Lean.mkIdent (`Keel.Constraint ++ f.getId)) $args*)
-    else `($f $args*)
+  | `(refinement% $r) => do
+    match refinementAtoms.lookup r.raw.getKind with
+    | some f =>
+      let args := (r.raw.getArgs.toList.drop 1).map fun a => (⟨a⟩ : TSyntax `term)
+      `($(mkIdent f) $(args.toArray)*)
+    | none => Macro.throwUnsupported
 
-/-- `α ∣ c`: the values of `α` satisfying the constraint `c`. -/
-scoped syntax:50 term:51 " ∣ " refinement : term
+/-- `α ∣ c`: the values of `α` satisfying the constraint `c`. Takes precedence
+over divisibility only when the right side is in the constraint language (it
+starts with a constraint name), so `3 ∣ n` and `k ∣ n ∧ k ∣ m` keep their
+meaning. A constraint held in a variable is written `Refined α c`. -/
+scoped syntax:50 (priority := high) term:51 " ∣ " refinement : term
 
 macro_rules
   | `($a ∣ $r:refinement) => `(Refined $a (refinement% $r))
+
+open Lean Elab Term in
+/-- A literal where a refined value is expected checks its constraint by
+`decide`. Declines (leaving the literal to Lean's own elaborator) unless the
+expected type is known to be `Refined α c`. -/
+def elabRefinedLit : TermElab := fun stx expectedType? => do
+  let some ty := expectedType? | throwUnsupportedSyntax
+  let ty ← instantiateMVars ty
+  unless ty.isAppOfArity ``Refined 2 do throwUnsupportedSyntax
+  elabTerm (← `(Subtype.mk $(⟨stx⟩) (by decide))) ty
+
+/-- Numerals: `(discount : Nat ∣ le 100 := 0)`, `pct 50`. -/
+@[term_elab num] def elabRefinedNum : Lean.Elab.Term.TermElab := elabRefinedLit
+
+/-- String literals: `(name : String ∣ minLength 1 := "anon")`. -/
+@[term_elab str] def elabRefinedStr : Lean.Elab.Term.TermElab := elabRefinedLit
 
 end Keel

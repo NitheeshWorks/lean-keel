@@ -71,6 +71,8 @@ inductive Constraint (α : Type) where
   | maxLength [Sized α] (n : Nat)
   | pattern [Textual α] (p : Pattern)
   | oneOf [DecidableEq α] (choices : List α)
+  /-- Membership up to a normalisation (click's case-insensitive `Choice`). -/
+  | oneOfBy [DecidableEq α] (norm : α → α) (choices : List α)
   | and (c d : Constraint α)
   | or (c d : Constraint α)
   | not (c : Constraint α)

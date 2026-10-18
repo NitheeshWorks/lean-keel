@@ -145,21 +145,26 @@ class ParseError (ε : Type) where
   /-- A recursive parser (`Parser.fix`) called itself without consuming
   input; the grammar is left-recursive. -/
   stuck : ε
+  /-- A depth-bounded recursive parser (`Parser.fixDepth`) nested deeper than
+  its bound. Defaults to `stuck` for error types that do not distinguish it. -/
+  depthExceeded : ε := stuck
 
 /-- A ready-made error type: the library's three kinds and a message. -/
 inductive Parse.Error where
   | eof
   | unexpected
   | stuck
+  | depthExceeded
   | other (msg : String)
   deriving Repr, DecidableEq, Inhabited
 
-instance : ParseError Parse.Error := ⟨.eof, .unexpected, .stuck⟩
+instance : ParseError Parse.Error := ⟨.eof, .unexpected, .stuck, .depthExceeded⟩
 
 instance : ParseError String :=
-  ⟨"unexpected end of input", "unexpected token", "parser made no progress"⟩
+  ⟨"unexpected end of input", "unexpected token", "parser made no progress",
+    "maximum nesting depth exceeded"⟩
 
-instance : ParseError Unit := ⟨(), (), ()⟩
+instance : ParseError Unit := ⟨(), (), (), ()⟩
 
 /-- A parser of `τ` tokens yielding `α`, failing with `ε`. The fields after
 `run` are its invariants (see the module docstring). -/

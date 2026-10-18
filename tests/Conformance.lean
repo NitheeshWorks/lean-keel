@@ -65,6 +65,43 @@ def compileError (s : String) : String :=
 
 def check (b : Bool) : IO Bool := pure b
 
+/-! ## STYLE.md section 1, as written: these must elaborate -/
+
+def pct (x : Nat ∣ le 100) : Nat := x.val
+
+structure Offer where
+  price    : Int ∣ gt 0
+  discount : Nat ∣ le 100 := 0
+
+def search (q : Option (String ∣ maxLength 50 ∧ minLength 3) := none) : String :=
+  match q with
+  | some s => s.val
+  | none => "<none>"
+
+def greet (name : String ∣ minLength 1 := "anon") : String := s!"hi {name.val}"
+
+-- The types are exactly the refinements: no leaked implicit arguments.
+example : (@pct : Refined Nat (Constraint.le 100) → Nat) = pct := rfl
+example : (@Offer.mk : Refined Int (Constraint.gt 0) → Refined Nat (Constraint.le 100) → Offer) =
+  Offer.mk := rfl
+-- Divisibility keeps its meaning under `open Keel`.
+example (k n m : Nat) (h : k ∣ n ∧ k ∣ m) : k ∣ n := h.1
+example : (3 : Nat) ∣ 6 := ⟨2, rfl⟩
+
+def fruits : List String := ["Orange", "Apple"]
+
+def pickFruit (s : String) : Option String :=
+  match Constraint.pick String.toLower fruits s with
+  | .ok c => some c.val
+  | .error _ => none
+
+def outcomeWith {α : Type} [ToString α] (policy : AllowPolicy) (rs : List (Route α))
+    (method path : String) : String :=
+  match Router.resolve rs method path policy with
+  | .found r _ => toString r.endpoint
+  | .methodNotAllowed _ allow => s!"405 {allow}"
+  | .notFound => "404"
+
 def cases : List Case := [
   -- tests/test_routing.py::test_router
   ⟨"tests/test_routing.py::test_router", "GET / runs the homepage", check (outcome app "GET" "/" == "Hello, world")⟩,
@@ -138,6 +175,24 @@ def cases : List Case := [
     check (match PathTemplate.compile "/a{/b" with
       | .ok t => t.match "/a{/b" |>.isSome
       | .error _ => false)⟩,
+  -- STYLE.md section 1: refinement types in signatures, fields and defaults
+  ⟨"STYLE.md section 1", "a refined argument is called with a literal", check (pct 50 == 50)⟩,
+  ⟨"STYLE.md section 1", "a refined field defaults to a literal",
+    check (({ price := 3 } : Offer).discount.val == 0 && ({ price := 3 } : Offer).price.val == 3)⟩,
+  ⟨"STYLE.md section 1", "an optional refined query parameter",
+    check (search == "<none>" && search (some "abc") == "abc")⟩,
+  ⟨"STYLE.md section 1", "a refined string default", check (greet == "hi anon" && greet "bo" == "hi bo")⟩,
+  -- click's case-insensitive Choice returns the declared choice
+  ⟨"tests/test_options.py::test_case_insensitive_choice", "apple, oRANGe and Apple pick the declared choice",
+    check (pickFruit "apple" == some "Apple" && pickFruit "oRANGe" == some "Orange" &&
+      pickFruit "Apple" == some "Apple")⟩,
+  ⟨"tests/test_options.py::test_case_insensitive_choice", "a non-choice is rejected",
+    check (pickFruit "pear" == none)⟩,
+  -- the Allow policy (UP-027)
+  ⟨"tests/test_routing.py::test_router", "unionOfPartials lists every partial route's methods, once",
+    check (outcomeWith .unionOfPartials app "DELETE" "/func" == "405 [GET, HEAD, POST]")⟩,
+  ⟨"tests/test_routing.py::test_router", "firstPartial lists the first partial route's methods",
+    check (outcomeWith .firstPartial app "DELETE" "/func" == "405 [GET, HEAD]")⟩,
   -- UP-030: starlette's '$' accepts a trailing newline; Keel matches the whole path
   ⟨"UP-030 (starlette/routing.py::compile_path)", "a trailing newline does not match an int route",
     check (intT.match "/int/5\n" |>.isNone)⟩,

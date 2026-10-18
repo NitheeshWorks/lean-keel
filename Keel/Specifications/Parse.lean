@@ -74,4 +74,20 @@ def ParseBelow : Prop :=
   ∀ (τ ε α : Type) [ParseError ε] (F : Parser τ ε α → Parser τ ε α) (n : Nat) (l : List τ),
     (below F n).parse l = if l.length < n then (fix F).parse l else .error ParseError.stuck l
 
+/-- Past the bound, the bounded fixpoint fails with `depthExceeded`. -/
+def ParseFixDepthZero : Prop :=
+  ∀ (τ ε α : Type) [ParseError ε] (F : Parser τ ε α → Parser τ ε α) (l : List τ),
+    (fixDepth 0 F).parse l = .error ParseError.depthExceeded l.tail
+
+/-- One level of the bounded fixpoint: `F` with a handle one level shallower,
+on strictly fewer tokens. -/
+def ParseFixDepthSucc : Prop :=
+  ∀ (τ ε α : Type) [ParseError ε] (d : Nat) (F : Parser τ ε α → Parser τ ε α) (l : List τ),
+    (fixDepth (d + 1) F).parse l = (F (guarded l.length fun _ _ => fixDepth d F)).parse l
+
+/-- Within the bound, the bounded fixpoint is the fixpoint. -/
+def FixDepthEqFix : Prop :=
+  ∀ (τ ε α : Type) [ParseError ε] (F : Parser τ ε α → Parser τ ε α) (d : Nat) (l : List τ),
+    l.length < d → (fixDepth d F).parse l = (fix F).parse l
+
 end Keel.Spec

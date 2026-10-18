@@ -490,6 +490,51 @@ theorem parse_below_of_lt [ParseError ε] (F : Parser τ ε α → Parser τ ε 
     (h : l.length < n) : (below F n).parse l = (fix F).parse l := by
   rw [parse_below, ite_eq_left h]
 
+theorem parse_guarded [ParseError ε] (n : Nat) (G : (m : Nat) → m < n → Parser τ ε α) (l : List τ) :
+    (guarded n G).parse l = if h : l.length < n then (G _ h).parse l else .error ParseError.stuck l := by
+  show Result.toReply l (if h : l.length - 0 < n then _ else _) = _
+  by_cases h : l.length < n
+  · rw [dite_eq_left (by simpa using h), dite_eq_left h]
+    have : (G (Input.size l - 0) (by simpa using h)) = G l.length h := by
+      congr 1
+    rw [this]; rfl
+  · rw [dite_eq_right (by simpa using h), dite_eq_right h]; simp
+
+@[simp] theorem parse_failAhead (e : ε) (l : List τ) :
+    (failAhead e : Parser τ ε α).parse l = .error e l.tail := by
+  cases l <;> rfl
+
+/-- **Past the bound**: no nested call is left, so the parser fails with
+`depthExceeded`, as a failure that consumed (one token, if there is one). -/
+@[simp] theorem parse_fixDepth_zero [ParseError ε] (F : Parser τ ε α → Parser τ ε α) (l : List τ) :
+    (fixDepth 0 F).parse l = .error ParseError.depthExceeded l.tail := by
+  simp [fixDepth]
+
+/-- **One level**: `fixDepth (d + 1) F` is `F` applied to a handle that runs
+`fixDepth d F` on strictly fewer tokens. -/
+theorem parse_fixDepth_succ [ParseError ε] (d : Nat) (F : Parser τ ε α → Parser τ ε α) (l : List τ) :
+    (fixDepth (d + 1) F).parse l = (F (guarded l.length fun _ _ => fixDepth d F)).parse l := by
+  show ((F (guarded (l.length - 0) fun _ _ => fixDepth d F)).run l 0).toReply l = _
+  rw [Nat.sub_zero]; rfl
+
+/-- **The bound is the only difference**: with more depth than tokens (every
+nested call consumes, so no input nests deeper than its length), the bounded
+fixpoint is the unbounded one. -/
+theorem fixDepth_eq_fix [ParseError ε] (F : Parser τ ε α → Parser τ ε α) :
+    ∀ (d : Nat) (l : List τ), l.length < d → (fixDepth d F).parse l = (fix F).parse l
+  | 0, _, h => absurd h (Nat.not_lt_zero _)
+  | d + 1, l, h => by
+    rw [parse_fixDepth_succ, parse_fix]
+    have hhandle : (guarded l.length fun _ _ => fixDepth d F) = below F l.length := by
+      apply ext
+      intro l'
+      rw [parse_guarded, parse_below]
+      by_cases h' : l'.length < l.length
+      · rw [dite_eq_left h', ite_eq_left h']
+        exact fixDepth_eq_fix F d l' (by omega)
+      · rw [dite_eq_right h', ite_eq_right h']
+    rw [hhandle]
+
 end Parser
 
 end Keel

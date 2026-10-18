@@ -9,7 +9,7 @@ built from them, so it inherits the invariants for free. The primitives are:
 `mapError`, `peek?`, `next?`, `satisfy`, `many`, and the recursion
 combinator `fix`.
 
-Totality. `many` and `fix` are the only recursive definitions. Both recurse
+Totality. `many`, `fix` and `fixDepth` are the only recursive definitions. Both recurse
 on the number of tokens left, `Input.size s - i`, by well-founded recursion:
 
 * `many p` repeats `p` while it succeeds *and moves*. The invariants say a
@@ -20,6 +20,10 @@ on the number of tokens left, `Input.size s - i`, by well-founded recursion:
   without progress (a left-recursive grammar) it fails with
   `ParseError.stuck`. Well-formed grammars never see that error, and
   `parse_fix` / `parse_below` say exactly when it can arise.
+* `fixDepth max F` is `fix F` with at most `max` nested calls; past the bound
+  it fails with `ParseError.depthExceeded`. Unbounded `fix` recurses as deep
+  as the input nests, which on attacker input can exhaust the native stack:
+  parsers of untrusted input use `fixDepth`.
 
 Choice is committed, as in Parsec: `p <|> q` tries `q` only if `p` failed
 without consuming input. `attempt p` makes a failure non-consuming.
@@ -463,6 +467,42 @@ def fix [ParseError ε] (F : Parser τ ε α → Parser τ ε α) : Parser τ ε
       rw [Input.size_list, Input.length_rest, Nat.sub_zero]
     simp only [hL]; exact (F _).run_eq s i
   pos_le l := (F _).pos_le l
+
+/-- Fail with `e` as a failure that consumed: reported one token on (or where
+it stands, at the end of input), so no alternative takes over. -/
+def failAhead (e : ε) : Parser τ ε α where
+  run s i :=
+    match Input.get? s i with
+    | some _ => .error e (i + 1)
+    | none => .error e i
+  run_eq s i := by
+    have h := Input.get?_rest s i 0
+    simp only [Nat.add_zero] at h
+    simp only [Input.get?_list, h]
+    cases Input.get? s i <;> simp [Nat.add_comm]
+  pos_le l := by cases l <;> simp
+
+/-- **The depth-bounded fixpoint**: `fix F`, with at most `max` recursive
+calls active at once. A call past the bound fails with
+`ParseError.depthExceeded`, as a failure that consumed (`failAhead`: reported
+one token past the call, inside the over-deep construct), so that no
+alternative such as `sepBy`'s empty case can swallow it and the whole parse
+fails with that error. The recursion is structural on `max`, so the
+native stack depth is bounded whatever the input: this is the form to use on
+untrusted input. As in `fix`, the handle runs only on strictly fewer tokens. -/
+def fixDepth [ParseError ε] (max : Nat) (F : Parser τ ε α → Parser τ ε α) : Parser τ ε α :=
+  match max with
+  | 0 => failAhead ParseError.depthExceeded
+  | d + 1 =>
+    { run := fun s i => (F (guarded (Input.size s - i) fun _ _ => fixDepth d F)).run s i
+      run_eq := fun s i => by
+        have hL : Input.size (Input.rest s i) - 0 = Input.size s - i := by
+          rw [Input.size_list, Input.length_rest, Nat.sub_zero]
+        show (F (guarded (Input.size s - i) fun _ _ => fixDepth d F)).run s i =
+          Result.shift i ((F (guarded (Input.size (Input.rest s i) - 0) fun _ _ => fixDepth d F)).run
+            (Input.rest s i) 0)
+        rw [hL]; exact (F _).run_eq s i
+      pos_le := fun l => (F _).pos_le l }
 
 end Parser
 

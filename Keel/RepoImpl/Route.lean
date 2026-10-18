@@ -146,6 +146,14 @@ def IsFull : Match β → Prop
 instance (m : Match β) : Decidable m.IsFull := by
   cases m <;> simp only [IsFull] <;> infer_instance
 
+/-- Whether a match is partial. -/
+def isPartial : Match β → Bool
+  | .partial => true
+  | _ => false
+
+theorem isPartial_iff (m : Match β) : m.isPartial = true ↔ m = .partial := by
+  cases m <;> simp [isPartial]
+
 end Match
 
 /-- **First-match dispatch**: the first route that matches fully; if none
@@ -183,20 +191,46 @@ def «matches» (r : Route α) (method path : String) : Match (Args r.path.piece
 
 end Route
 
+/-- Which methods a `405` lists in `Allow`. -/
+inductive AllowPolicy where
+  /-- The methods of the first route that matched the path: starlette's
+  behaviour (recorded upstream as UP-027). -/
+  | firstPartial
+  /-- Every method of every route that matched the path, once each, in route
+  order and then each route's method order. -/
+  | unionOfPartials
+  deriving DecidableEq, Repr, Inhabited
+
+/-- The list without repeats, keeping first occurrences. -/
+def dedup : List String → List String
+  | [] => []
+  | x :: xs => x :: (dedup xs).filter (· != x)
+
 /-- What the router does with a request. -/
 inductive Resolution (α : Type) : Type 1 where
   /-- Run this route's endpoint with these captured values. -/
   | found (r : Route α) (args : Args r.path.pieces)
-  /-- `405 Method Not Allowed`, with the route's methods for `Allow`. -/
+  /-- `405 Method Not Allowed`: the first route that matched the path, and the
+  methods for `Allow`. -/
   | methodNotAllowed (r : Route α) (allow : List String)
   /-- `404 Not Found`. -/
   | notFound
 
-/-- **The router**: starlette's `Router` decision for a method and a path. -/
-def Router.resolve {α : Type} (routes : List (Route α)) (method path : String) : Resolution α :=
+/-- The methods of every route that matches the path, once each. -/
+def Router.partialMethods {α : Type} (routes : List (Route α)) (method path : String) : List String :=
+  dedup ((routes.filter fun r => (r.matches method path).isPartial).flatMap (·.methods.getD []))
+
+/-- **The router**: starlette's `Router` decision for a method and a path; the
+`Allow` list of a `405` follows `policy`. -/
+def Router.resolve {α : Type} (routes : List (Route α)) (method path : String)
+    (policy : AllowPolicy := .firstPartial) : Resolution α :=
   match dispatch (fun (r : Route α) => r.matches method path) routes with
   | .found r v => .found r v
-  | .partial r => .methodNotAllowed r (r.methods.getD [])
+  | .partial r =>
+    .methodNotAllowed r
+      (match policy with
+       | .firstPartial => r.methods.getD []
+       | .unionOfPartials => Router.partialMethods routes method path)
   | .none => .notFound
 
 end Keel

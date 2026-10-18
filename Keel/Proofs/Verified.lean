@@ -30,6 +30,9 @@ structure VerifiedParse where
   takeWhile : Spec.ParseTakeWhile
   fix : Spec.ParseFix
   below : Spec.ParseBelow
+  fixDepthZero : Spec.ParseFixDepthZero
+  fixDepthSucc : Spec.ParseFixDepthSucc
+  fixDepthEqFix : Spec.FixDepthEqFix
 
 theorem theVerifiedParse : VerifiedParse where
   ext _ _ _ _ _ h := Parser.ext h
@@ -42,6 +45,9 @@ theorem theVerifiedParse : VerifiedParse where
   takeWhile _ _ _ := Parser.parse_takeWhile
   fix _ _ _ _ := Parser.parse_fix
   below _ _ _ _ := Parser.parse_below
+  fixDepthZero _ _ _ _ := Parser.parse_fixDepth_zero
+  fixDepthSucc _ _ _ _ := Parser.parse_fixDepth_succ
+  fixDepthEqFix _ _ _ _ F d l h := Parser.fixDepth_eq_fix F d l h
 
 /-- Lawful codecs: the general law and its forms, and one law per
 combinator. -/
@@ -93,6 +99,7 @@ structure VerifiedRefine where
   bothOkIff : Spec.BothOkIff
   eachOkIff : Spec.EachOkIff
   locEach : Spec.LocEach
+  pickFind : Spec.PickFind
 
 theorem theVerifiedRefine : VerifiedRefine where
   validateIff _ c x := Constraint.validate_iff c x
@@ -104,6 +111,7 @@ theorem theVerifiedRefine : VerifiedRefine where
   bothOkIff _ _ _ _ v w x a b := Validator.both_ok_iff v w x a b
   eachOkIff _ _ _ _ v xs ys := Validator.each_ok_iff v xs ys
   locEach _ _ _ _ v xs es h := Validator.loc_each v xs es h
+  pickFind _ _ norm cs x v := Constraint.pick_ok_iff norm cs x v
 
 /-- Routing: templates round-trip, and dispatch is first match with the
 405 and 404 conditions characterised. -/
@@ -115,6 +123,8 @@ structure VerifiedRoute where
   dispatchNone : Spec.DispatchNone
   resolveFirstMatch : Spec.ResolveFirstMatch
   methodNotAllowed : Spec.MethodNotAllowedIff
+  allowFirstPartial : Spec.AllowFirstPartial
+  allowUnionOfPartials : Spec.AllowUnionOfPartials
   notFound : Spec.NotFoundIff
 
 theorem theVerifiedRoute : VerifiedRoute where
@@ -123,8 +133,11 @@ theorem theVerifiedRoute : VerifiedRoute where
   firstMatch _ _ m rs r b := dispatch_found_iff m rs r b
   dispatchPartial _ _ m rs := dispatch_partial_iff m rs
   dispatchNone _ _ m rs := dispatch_none_iff m rs
-  resolveFirstMatch _ rs method path r v := Router.resolve_found_iff rs method path r v
-  methodNotAllowed _ rs method path := Router.methodNotAllowed_iff rs method path
-  notFound _ rs method path := Router.notFound_iff rs method path
+  resolveFirstMatch _ rs method path r v policy := Router.resolve_found_iff rs method path r v policy
+  methodNotAllowed _ rs method path policy := Router.methodNotAllowed_iff rs method path policy
+  allowFirstPartial _ rs method path r allow h := Router.methodNotAllowed_allow_first rs method path r allow h
+  allowUnionOfPartials _ rs method path r allow h :=
+    Router.methodNotAllowed_allow_union rs method path r allow h
+  notFound _ rs method path policy := Router.notFound_iff rs method path policy
 
 end Keel

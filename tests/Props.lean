@@ -58,9 +58,15 @@ returns a description of the failing value. -/
 structure Property where
   name : String
   check : Rng → Option String × Rng
+  /-- How many random cases; a fixed native probe runs once. -/
+  cases : Nat := 200
 
 def prop {α : Type} (name : String) (gen : Rng → α × Rng) (ok : α → Bool) (display : α → String) : Property :=
-  ⟨name, fun r => let (a, r) := gen r; (if ok a then none else some (display a), r)⟩
+  { name, check := fun r => let (a, r) := gen r; (if ok a then none else some (display a), r) }
+
+/-- A fixed check on a large input, run once (a native resource probe). -/
+def probe (name : String) (ok : Unit → Bool) (what : String) : Property :=
+  { name, check := fun r => (if ok () then none else some what, r), cases := 1 }
 
 def bytes (l : List UInt8) : ByteArray := ⟨l.toArray⟩
 
@@ -98,9 +104,13 @@ def Rng.tree (r : Rng) : Nat → Tree × Rng
       (.node ts, r)
 
 open Parser in
-def treeP : Parser Char Parse.Error Tree := fix fun self =>
+/-- One level of the bracket grammar. -/
+def treeBody (self : Parser Char Parse.Error Tree) : Parser Char Parse.Error Tree :=
   (do let ds ← many1 (satisfy Char.isDigit); pure (.leaf (Codec.digitsValue ds)))
   <|> (do let _ ← token '['; let ts ← sepBy self (token ','); let _ ← token ']'; pure (.node ts))
+
+open Parser in
+def treeP : Parser Char Parse.Error Tree := fixDepth 512 treeBody
 
 /-! ## Codecs under test -/
 
@@ -123,7 +133,30 @@ def roundTrip {α : Type} (c : Codec UInt8 α) (a : α) (rest : List UInt8) (eq 
   | some (a', r) => eq a a' && r.data.toList == rest
   | none => false
 
+/-- `n` nested brackets. -/
+def nestedBrackets (n : Nat) : Array Char := (List.replicate n '[' ++ List.replicate n ']').toArray
+
 def properties : List Property := [
+  probe "Parse.fixDepth: 10^6 nested brackets fail with depthExceeded, natively, no crash"
+    (fun _ => match treeP.runFrom (nestedBrackets 1000000) 0 with
+      | .error (.depthExceeded, _) => true
+      | _ => false)
+    "nesting 10^6",
+  prop "Parse.fixDepth agrees with fix within the bound"
+    (fun r => r.tree 4)
+    (fun t => let s := t.render
+      (treeP.parse s matches .ok _ []) &&
+        match (treeP.parse s), ((Parser.fix fun self => treeBody self).parse s) with
+        | .ok a [], .ok b [] => a.beq b
+        | _, _ => false)
+    (fun t => String.ofList t.render),
+  probe "Parse.takeWhile runs in constant stack on 10^7 bytes"
+    (fun _ =>
+      let bs : ByteArray := ⟨Array.replicate 10000000 97⟩
+      match (Parser.takeWhile (· == 97) : Parser UInt8 Parse.Error _).runFrom bs 0 with
+      | .ok ⟨(v, j), _⟩ => v.length == 10000000 && j == 10000000
+      | .error _ => false)
+    "width 10^7",
   -- Parse
   prop "Parse.takeWhile is List.takeWhile, on a ByteArray"
     (fun r => r.bytes 40)
@@ -270,27 +303,30 @@ def properties : List Property := [
         [{ path := path% "/a/{x:int}", methods := some ["GET"], endpoint := "get" },
          { path := path% "/a/{x:int}", methods := some ["PUT"], endpoint := "put" },
          { path := path% "/a/{x:path}", methods := some ["POST"], endpoint := "post" }]
-      match Router.resolve routes method s!"/a/{n}" with
+      (match Router.resolve routes method s!"/a/{n}" with
       | .found r _ => r.endpoint == method.toLower
       | .methodNotAllowed _ allow => method == "DELETE" && allow == ["GET"]
-      | .notFound => false)
+      | .notFound => false) &&
+      (match Router.resolve routes method s!"/a/{n}" .unionOfPartials with
+      | .found r _ => r.endpoint == method.toLower
+      | .methodNotAllowed _ allow => method == "DELETE" && allow == ["GET", "PUT", "POST"]
+      | .notFound => false))
     toString
 ]
 
 def main (args : List String) : IO UInt32 := do
   let seed := (args.head? >>= String.toNat?).getD 88172645463325252
-  let cases := 200
   let mut rng : Rng := { s := UInt64.ofNat seed }
   let mut failures := 0
   for p in properties do
     let mut failed : Option String := none
-    for _ in [0:cases] do
+    for _ in [0:p.cases] do
       if failed.isSome then break
       let (res, rng') := p.check rng
       rng := rng'
       failed := res
     match failed with
-    | none => IO.println s!"ok    {p.name} ({cases} cases)"
+    | none => IO.println s!"ok    {p.name} ({p.cases} cases)"
     | some why =>
       failures := failures + 1
       IO.println s!"FAIL  {p.name}: {why}  (seed {seed})"

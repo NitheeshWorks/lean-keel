@@ -20,12 +20,13 @@ re-proved case by case.
 import Keel
 open Keel
 
--- Parse: a total recursive parser. `fix` needs no fuel; it runs on a
--- ByteArray, an Array or a String, and is reasoned about on lists.
+-- Parse: a total recursive parser, depth-bounded so that no input can
+-- exhaust the stack (past 512 levels it fails with `depthExceeded`). It runs
+-- on a ByteArray, an Array or a String, and is reasoned about on lists.
 inductive Tree where | leaf (n : Nat) | node (ts : List Tree)
 
 open Parser in
-def tree : Parser Char Parse.Error Tree := fix fun self =>
+def tree : Parser Char Parse.Error Tree := fixDepth 512 fun self =>
   (do let ds ← many1 (satisfy Char.isDigit); pure (.leaf (Codec.digitsValue ds)))
   <|> (do let _ ← token '['; let ts ← sepBy self (token ','); let _ ← token ']'; pure (.node ts))
 
@@ -39,12 +40,16 @@ example (lines : List ByteArray) (h : Codec.ManyValid (Codec.delimited "\r\n" fi
     headerCodec.decode (headerCodec.encode lines) = some (lines, []) :=
   Codec.many_lawful _ h
 
--- Refine: constraints are types.
+-- Refine: constraints are types; a literal is checked where it is written.
 structure Offer where
   price    : Int ∣ gt 0
-  discount : Nat ∣ le 100 := ⟨0, by decide⟩
+  discount : Nat ∣ le 100 := 0
 
-def search (q : String ∣ maxLength 50 ∧ minLength 3) : String := q.val
+def search (q : Option (String ∣ maxLength 50 ∧ minLength 3) := none) : String :=
+  (q.map (·.val)).getD ""
+
+def pct (x : Nat ∣ le 100) : Nat := x.val
+#eval pct 50                                  -- 50
 
 #eval ((Constraint.gt (0 : Int)).refine (-1)).isOk   -- false: one error, `failed := gt 0`
 
@@ -80,9 +85,18 @@ the gate (`scripts/Axioms.lean`): only `propext`, `Quot.sound` and
 * **Literals and lookahead.** `parse_lit : (lit l).parse (l ++ r) = .ok () r`;
   `parse_startsWith : (startsWith l).parse x = .ok (decide (l <+: x)) x`.
 * **Confinement.** `parse_isolate_append : l.length = n → p.parse l = .ok a [] → (isolate n p).parse (l ++ r) = .ok a r`.
-* **Recursion.** `parse_fix : (fix F).parse l = (F (below F l.length)).parse l` and
+* **Bounded recursion** (the form for untrusted input). `fixDepth max F`
+  never has more than `max` recursive calls active, by structural recursion on
+  `max`, so its native stack depth is bounded whatever the input; past the
+  bound it fails with `depthExceeded`, as a consumed failure no alternative
+  can swallow. `parse_fixDepth_zero : (fixDepth 0 F).parse l = .error ParseError.depthExceeded l.tail`,
+  `parse_fixDepth_succ : (fixDepth (d + 1) F).parse l = (F (guarded l.length fun _ _ => fixDepth d F)).parse l`,
+  and within the bound it is the fixpoint:
+  `fixDepth_eq_fix : l.length < d → (fixDepth d F).parse l = (fix F).parse l`.
+* **Unbounded recursion.** `parse_fix : (fix F).parse l = (F (below F l.length)).parse l` and
   `parse_below_of_lt : l.length < n → (below F n).parse l = (fix F).parse l`:
-  the recursive handle is the fixpoint on every strictly shorter input.
+  the recursive handle is the fixpoint on every strictly shorter input. `fix`
+  recurses as deep as the input nests, so it is not for untrusted input.
 
 ### Keel.Codec
 
@@ -105,6 +119,9 @@ the gate (`scripts/Axioms.lean`): only `propext`, `Quot.sound` and
 * **A failure says why.** `validate_error_ne_nil : c.validate x = .error es → es ≠ []`.
 * **Conjunction validates both.** `validate_and_iff : (c.and d).validate x = .ok x ↔ c.validate x = .ok x ∧ d.validate x = .ok x`.
 * **Refinement.** `refine_ok_iff : (∃ y, c.refine x = .ok y) ↔ c.holds x`, the value carrying its proof.
+* **Choices up to a normalisation** (click's case-insensitive `Choice`):
+  `pick_ok_iff : (∃ c, pick norm cs x = .ok c ∧ c.val = v) ↔ cs.find? (fun c => decide (norm c = norm x)) = some v`,
+  the first declared choice; `pick_isOk_iff` relates it to `oneOfBy norm cs`.
 * **Error locations compose along paths.**
   `Validator.atPath_append : v.atPath (p ++ q) = (v.atPath q).atPath p` and
   `prefix_loc_atPath : (v.atPath p) x = .error es → ∀ e ∈ es, p <+: Located.loc e`.
@@ -120,10 +137,15 @@ the gate (`scripts/Axioms.lean`): only `propext`, `Quot.sound` and
   `PathTemplate.urlFor_match : t.match path = some v → t.Canonical path → t.urlFor v = path`.
 * **First match.** `dispatch_found_iff`: dispatch finds `r` exactly when `r`
   matches fully and no earlier route does; `Router.resolve_found_iff` for HTTP.
-* **405 iff partial.** `Router.methodNotAllowed_iff`: the router answers 405
-  exactly when no route matches the method and the path, and some route
-  matches the path; `methodNotAllowed_allow`: `Allow` is that first partial
-  route's methods, as in starlette.
+* **405 iff partial**, for either `Allow` policy. `Router.methodNotAllowed_iff`:
+  the router answers 405 exactly when no route matches the method and the
+  path, and some route matches the path.
+* **The `Allow` list** follows an `AllowPolicy` argument (default
+  `.firstPartial`). `methodNotAllowed_allow_first`: under `.firstPartial`
+  (starlette's behaviour, UP-027) it is the methods of the first route that
+  matched the path. `methodNotAllowed_allow_union`: under `.unionOfPartials`
+  a method is listed exactly when some partially matching route lists it,
+  each once (`Nodup`), in route order.
 * **404 iff no path match.** `Router.notFound_iff : resolve rs method path = .notFound ↔ ∀ r ∈ rs, r.path.match path = none`.
 
 ## Using Keel from a lean-* repo
@@ -139,12 +161,12 @@ rev = "main"
 
 | Repo | Use | Instead of |
 |---|---|---|
-| lean-json | `Parser UInt8 ParseErr Json` with `fix` for values (`ParseError ParseErr` instance), `parse_*` laws, `Parser.run_eq_of_parse`; `Codec.nat`/`Codec.lit` for leaves | the fuel arguments, `parse_fuel_mono`, `parse_fuel_enough`, `step_progress`, the `Spec.At` byte lemmas |
+| lean-json | `Parser UInt8 ParseErr Json` with the depth-bounded `fixDepth` for values (jiter's recursion limit as `max`, `depthExceeded` mapped to `recursionLimitExceeded` in the `ParseError ParseErr` instance), `parse_*` laws, `fixDepth_eq_fix`, `Parser.run_eq_of_parse`; `Codec.nat`/`Codec.lit` for leaves | the fuel arguments, `parse_fuel_mono`, `parse_fuel_enough`, `step_progress`, the `Spec.At` byte lemmas |
 | lean-multipart | `Codec.delimited` (boundaries: `Avoids`), `Codec.many`/`manyTill`, `Parser.takeWhile` | hand-rolled `findBoundary` and `_ext` round trips |
 | lean-itsdangerous | `Codec.delimited` with `avoids_of_head_not_mem` for the separator; `Codec.natBE` for timestamps | `splitFirst_append`, `rsplit_append`, `bytesToInt_intToBytes` |
-| lean-click | `Int ∣ ge lo ∧ le hi` (IntRange), `String ∣ oneOf cs` (choice), `Constraint.validate_iff`; `dispatch` for groups | `IntBounds.contains` proofs, `choice_in_set`, `group_dispatch_first_match` |
+| lean-click | `Int ∣ ge lo ∧ le hi` (IntRange), `String ∣ oneOf cs` (case-sensitive `Choice`), `Constraint.pick normChoice cs` with `pick_ok_iff` (case-insensitive `Choice`: the first declared choice, as `find?`), `Constraint.validate_iff`; `dispatch` for groups | `IntBounds.contains` proofs, `choice_in_set`, `group_dispatch_first_match` |
 | lean-pydantic | `Constraint`, `α ∣ c`, `Validator` with `Located` for `ValidationError`, `loc_atPath`; supply a `Pattern` from the verified regex | its own `Constraint`/`Satisfies`/`validate_sound`/`validate_complete`/`validate_loc_prefix` |
-| lean-starlette | `PathTemplate`, `Convertor`, `path%`, `Router.resolve`, `match_urlFor`, `methodNotAllowed_iff` | its own `compile_match_url_path_for`, `route_first_match`, `partial_iff_405` |
+| lean-starlette | `PathTemplate`, `Convertor`, `path%`, `Router.resolve` with an `AllowPolicy`, `match_urlFor`, `methodNotAllowed_iff`, `methodNotAllowed_allow_first`/`_union` | its own `compile_match_url_path_for`, `route_first_match`, `partial_iff_405` |
 
 ## Getting started
 

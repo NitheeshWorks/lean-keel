@@ -295,7 +295,7 @@ test = ["tests/Conformance.lean::a value that looks like a placeholder is kept"]
 [[requirement]]
 id = "route.allow_order"
 upstream = "starlette/routing.py::Route.handle (UP-027)"
-title = "Allow lists the route's methods in declaration order, not set order"
+title = "Allow lists methods in declaration order, not set order; the policy is a parameter"
 status = "deviation"
 realises = ["Keel.Router.resolve"]
 theorem = ["Keel.Router.methodNotAllowed_allow"]
@@ -323,3 +323,45 @@ title = "Keel does not fix a regular-expression language: Pattern carries a sour
 status = "excluded"
 realises = ["Keel.Pattern"]
 
+[[requirement]]
+id = "parse.depth"
+upstream = "STYLE.md section 2: total parsing"
+title = "Depth-bounded recursion: no input drives fixDepth deeper than its bound; past it, depthExceeded; within it, fix"
+status = "implemented"
+realises = ["Keel.Parser.fixDepth", "Keel.Parser.failAhead"]
+theorem = ["Keel.Parser.parse_fixDepth_zero", "Keel.Parser.parse_fixDepth_succ", "Keel.Parser.fixDepth_eq_fix"]
+test = ["tests/Props.lean::Parse.fixDepth: 10^6 nested brackets fail with depthExceeded, natively, no crash"]
+
+[[requirement]]
+id = "parse.width"
+upstream = "STYLE.md section 3"
+title = "Loops run in constant stack on wide input (10^7 tokens), probed natively"
+status = "tested"
+realises = ["Keel.Parser.manyGo", "Keel.Parser.takeWhile"]
+test = ["tests/Props.lean::Parse.takeWhile runs in constant stack on 10^7 bytes"]
+
+[[requirement]]
+id = "refine.literals"
+upstream = "STYLE.md section 1: no proof obligations in user code"
+title = "Literals of a refined type check their constraint by decide; alpha | c elaborates without stray implicits"
+status = "implemented"
+realises = ["Keel.elabRefinedNum", "Keel.elabRefinedStr", "Keel.Refined"]
+test = ["tests/Conformance.lean::a refined field defaults to a literal"]
+
+[[requirement]]
+id = "refine.oneOfBy"
+upstream = "tests/test_options.py::test_case_insensitive_choice"
+title = "Case-insensitive choice returns the first declared choice"
+status = "implemented"
+realises = ["Keel.Constraint.oneOfBy", "Keel.Constraint.pick"]
+theorem = ["Keel.Constraint.pick_ok_iff", "Keel.Constraint.pick_isOk_iff"]
+test = ["tests/Conformance.lean::apple, oRANGe and Apple pick the declared choice"]
+
+[[requirement]]
+id = "route.allow_policy"
+upstream = "tests/test_routing.py::test_router (UP-027)"
+title = "Allow policy: firstPartial (starlette) or unionOfPartials (deduplicated, route order)"
+status = "implemented"
+realises = ["Keel.AllowPolicy", "Keel.Router.partialMethods"]
+theorem = ["Keel.Router.methodNotAllowed_allow_first", "Keel.Router.methodNotAllowed_allow_union"]
+test = ["tests/Conformance.lean::unionOfPartials lists every partial route's methods, once"]

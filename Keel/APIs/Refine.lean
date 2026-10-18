@@ -49,6 +49,43 @@ theorem refine_error (c : Constraint α) {x : α} {es : List (Refine.Error α)} 
   unfold refine
   split <;> rename_i h <;> simp [h]
 
+/-- **A choice, up to a normalisation** (click's `Choice.convert` with
+`case_sensitive=False`): the *first declared* choice equal to `x` after
+`norm`, which is what click returns, not `x` itself. -/
+def pick [DecidableEq α] (norm : α → α) (cs : List α) (x : α) :
+    Except (List (Refine.Error α)) {c // c ∈ cs} :=
+  match h : cs.find? (fun c => decide (norm c = norm x)) with
+  | some c => .ok ⟨c, List.mem_of_find?_eq_some h⟩
+  | none => .error [⟨[], .oneOfBy norm cs, x⟩]
+
+/-- `pick` returns exactly what `find?` finds. -/
+theorem pick_ok_iff [DecidableEq α] (norm : α → α) (cs : List α) (x v : α) :
+    (∃ c, pick norm cs x = .ok c ∧ c.val = v) ↔ cs.find? (fun c => decide (norm c = norm x)) = some v := by
+  unfold pick
+  split
+  · rename_i c hc
+    simp only [Except.ok.injEq]
+    constructor
+    · rintro ⟨_, rfl, rfl⟩; exact hc
+    · intro h; rw [hc] at h; cases h; exact ⟨_, rfl, rfl⟩
+  · rename_i hc
+    simp [hc]
+
+/-- `pick` succeeds exactly when `oneOfBy` holds. -/
+theorem pick_isOk_iff [DecidableEq α] (norm : α → α) (cs : List α) (x : α) :
+    (∃ c, pick norm cs x = .ok c) ↔ (oneOfBy norm cs).holds x := by
+  unfold pick
+  simp only [holds]
+  split
+  · rename_i c hc
+    have := List.find?_some hc
+    exact ⟨fun _ => ⟨c, List.mem_of_find?_eq_some hc, by simpa using this⟩, fun _ => ⟨_, rfl⟩⟩
+  · rename_i hc
+    simp only [reduceCtorEq, exists_false, false_iff, not_exists, not_and]
+    intro c hc' he
+    have := List.find?_eq_none.1 hc c hc'
+    simp [he] at this
+
 end Constraint
 
 /-- A constraint as a validator, producing the refined value. -/

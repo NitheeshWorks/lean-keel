@@ -282,6 +282,31 @@ theorem dispatch_partial_iff : ∀ rs : List ρ,
       simp only [Match.IsFull, not_false_eq_true, true_and, reduceCtorEq, false_or]
       exact ih
 
+/-- The route a partial dispatch reports is the first that matched at all;
+every route before it matched not even partially. -/
+theorem dispatch_partial_first : ∀ (rs : List ρ) (r : ρ), dispatch m rs = .partial r →
+    ∃ pre post, rs = pre ++ r :: post ∧ m r = .partial ∧ ∀ r' ∈ pre, m r' = .none
+  | [], r, h => by simp [dispatch] at h
+  | r₀ :: rs, r, h => by
+    simp only [dispatch] at h
+    cases hm : m r₀ with
+    | full b => rw [hm] at h; cases h
+    | «partial» =>
+      rw [hm] at h
+      cases hd : dispatch m rs with
+      | found r' b' => rw [hd] at h; cases h
+      | «partial» r' => rw [hd] at h; cases h; exact ⟨[], rs, rfl, hm, by simp⟩
+      | none => rw [hd] at h; cases h; exact ⟨[], rs, rfl, hm, by simp⟩
+    | none =>
+      rw [hm] at h
+      obtain ⟨pre, post, he, hr, hpre⟩ := dispatch_partial_first rs r h
+      refine ⟨r₀ :: pre, post, by simp [he], hr, ?_⟩
+      intro r' hr'
+      simp only [List.mem_cons] at hr'
+      rcases hr' with rfl | hr'
+      · exact hm
+      · exact hpre r' hr'
+
 end Dispatch
 
 /-! ## The HTTP router -/
@@ -313,42 +338,85 @@ theorem matches_none_iff (r : Route α) (method path : String) :
 
 end Route
 
+theorem mem_dedup : ∀ (l : List String) (x : String), x ∈ dedup l ↔ x ∈ l
+  | [], x => by simp [dedup]
+  | y :: l, x => by
+    simp only [dedup, List.mem_cons, List.mem_filter, mem_dedup l x, bne_iff_ne, ne_eq]
+    by_cases h : x = y <;> simp [h]
+
+theorem nodup_dedup : ∀ l : List String, (dedup l).Nodup
+  | [] => List.nodup_nil
+  | y :: l => by
+    simp only [dedup]
+    refine List.nodup_cons.2 ⟨by simp, (nodup_dedup l).filter _⟩
+
 namespace Router
 
 variable {α : Type}
 
-/-- **First match.** The router runs `r` with `v` exactly when `r` matches the
-method and the path with `v`, and no earlier route matches both. -/
+/-- **First match**, for either `Allow` policy. -/
 theorem resolve_found_iff (rs : List (Route α)) (method path : String) (r : Route α)
-    (v : Args r.path.pieces) :
-    resolve rs method path = .found r v ↔
+    (v : Args r.path.pieces) (policy : AllowPolicy := .firstPartial) :
+    resolve rs method path policy = .found r v ↔
       ∃ pre post, rs = pre ++ r :: post ∧ r.matches method path = .full v ∧
         ∀ r' ∈ pre, ¬ (r'.matches method path).IsFull := by
   rw [← dispatch_found_iff (fun (r : Route α) => r.matches method path)]
   simp only [resolve]
   cases dispatch (fun (r : Route α) => r.matches method path) rs <;> simp
 
-/-- **405 iff partial.** The router answers `405 Method Not Allowed` exactly
-when no route matches both the method and the path, and some route matches
-the path. -/
-theorem methodNotAllowed_iff (rs : List (Route α)) (method path : String) :
-    (∃ r allow, resolve rs method path = .methodNotAllowed r allow) ↔
+/-- **405 iff partial**, for either `Allow` policy: the router answers
+`405 Method Not Allowed` exactly when no route matches both the method and the
+path, and some route matches the path. -/
+theorem methodNotAllowed_iff (rs : List (Route α)) (method path : String)
+    (policy : AllowPolicy := .firstPartial) :
+    (∃ r allow, resolve rs method path policy = .methodNotAllowed r allow) ↔
       (∀ r ∈ rs, ¬ (r.matches method path).IsFull) ∧ ∃ r ∈ rs, r.matches method path = .partial := by
   rw [← dispatch_partial_iff (fun (r : Route α) => r.matches method path)]
   simp only [resolve]
   cases dispatch (fun (r : Route α) => r.matches method path) rs <;> simp
 
-/-- The `Allow` list of a `405` is the methods of the first route that
-matched the path (as starlette's `Router` does). -/
+/-- **`Allow` under `firstPartial`** (starlette): the methods of the first route
+that matched the path; every route before it matched neither path nor method. -/
+theorem methodNotAllowed_allow_first (rs : List (Route α)) (method path : String) (r : Route α)
+    (allow : List String) (h : resolve rs method path .firstPartial = .methodNotAllowed r allow) :
+    allow = r.methods.getD [] ∧
+      ∃ pre post, rs = pre ++ r :: post ∧ r.matches method path = .partial ∧
+        ∀ r' ∈ pre, r'.matches method path = .none := by
+  simp only [resolve] at h
+  split at h
+  · cases h
+  · rename_i r' hd
+    cases h
+    exact ⟨rfl, dispatch_partial_first _ rs r hd⟩
+  · cases h
+
+/-- **`Allow` under `unionOfPartials`**: a method is listed exactly when some
+route that matched the path lists it, and each is listed once. -/
+theorem methodNotAllowed_allow_union (rs : List (Route α)) (method path : String) (r : Route α)
+    (allow : List String) (h : resolve rs method path .unionOfPartials = .methodNotAllowed r allow) :
+    (∀ x, x ∈ allow ↔ ∃ r' ∈ rs, r'.matches method path = .partial ∧ x ∈ r'.methods.getD []) ∧
+      allow.Nodup := by
+  simp only [resolve] at h
+  split at h
+  · cases h
+  · cases h
+    refine ⟨fun x => ?_, nodup_dedup _⟩
+    simp only [partialMethods, mem_dedup, List.mem_flatMap, List.mem_filter, Match.isPartial_iff]
+    constructor
+    · rintro ⟨r', ⟨h1, h2⟩, h3⟩; exact ⟨r', h1, h2, h3⟩
+    · rintro ⟨r', h1, h2, h3⟩; exact ⟨r', ⟨h1, h2⟩, h3⟩
+  · cases h
+
+/-- The `Allow` list of a `405` under `firstPartial`. -/
 theorem methodNotAllowed_allow (rs : List (Route α)) (method path : String) (r : Route α)
     (allow : List String) (h : resolve rs method path = .methodNotAllowed r allow) :
-    allow = r.methods.getD [] := by
-  simp only [resolve] at h
-  split at h <;> cases h; rfl
+    allow = r.methods.getD [] :=
+  (methodNotAllowed_allow_first rs method path r allow h).1
 
-/-- **404 iff no route matches the path.** -/
-theorem notFound_iff (rs : List (Route α)) (method path : String) :
-    resolve rs method path = .notFound ↔ ∀ r ∈ rs, r.path.match path = none := by
+/-- **404 iff no route matches the path**, for either `Allow` policy. -/
+theorem notFound_iff (rs : List (Route α)) (method path : String)
+    (policy : AllowPolicy := .firstPartial) :
+    resolve rs method path policy = .notFound ↔ ∀ r ∈ rs, r.path.match path = none := by
   have := dispatch_none_iff (fun (r : Route α) => r.matches method path) rs
   simp only [Route.matches_none_iff] at this
   rw [← this]

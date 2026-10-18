@@ -36,6 +36,13 @@ defined; the laws users cite live in `Proofs/`.
   otherwise, which happens only for a left-recursive grammar). Lean's
   well-founded recursion compiles to plain recursion; the measure costs
   nothing at run time.
+* **Bounded stack.** Totality is not enough for a server: `fix` recurses as
+  deep as the input nests, so 10^6 nested brackets exhaust a native stack.
+  `fixDepth max F` is structural on `max`, so no input drives it deeper than
+  `max` nested calls; past the bound it fails with `depthExceeded`. Parsers of
+  untrusted input use `fixDepth`. The loops (`many`, `takeWhile`, `manyTill`,
+  `sepBy`) are accumulator loops in constant stack; `tests/Props.lean` probes
+  both natively (10^6 nesting, 10^7 width).
 * **Laws on lists, code on arrays.** Every parser law is an equation for
   `Parser.parse : List τ → Reply τ ε α`. `Parser.ext` says a parser is its
   list meaning, and `Parser.run_eq_of_parse` transports a list fact to any
@@ -76,6 +83,12 @@ routing tests.
 * **Parse: values are position-independent.** Translation invariance rules out
   a "current position" parser; positions appear only in `Result` and
   `runFrom`. This is what makes the list semantics complete.
+* **Parse: a depth failure is a consumed failure.** `fixDepth` past its bound
+  fails through `failAhead`, reported one token past the call, so committed
+  choice does not mistake it for "this alternative does not apply" (otherwise
+  `sepBy self sep <|> pure []` would swallow it and a later token would be
+  blamed). `ParseError.depthExceeded` defaults to `stuck` for error types
+  that do not distinguish it.
 * **Codec: the decoder is a `Keel.Parse` parser**, polymorphic in the error
   type, so a codec composes with hand-written parsers and runs on any buffer.
   `delimited` and `lengthPrefixed` confine the inner decoder with
@@ -88,9 +101,20 @@ routing tests.
   matcher. Keel fixes no regular-expression language; lean-pydantic supplies a
   verified matcher with its source, so the schema and the check cannot drift.
 * **Refine: `α ∣ c` coexists with `Dvd`.** The notation is scoped to
-  `open Keel` and parses the constraint language (`∧`, `∨`, `¬`, atoms) as its
-  own syntax category, so `String ∣ maxLength 50 ∧ minLength 3` means the
-  conjunction, and `3 ∣ n` still means divisibility.
+  `open Keel`, has priority over divisibility, and parses the constraint
+  language as its own syntax category whose atoms are the constraint names as
+  non-reserved keywords. So `String ∣ maxLength 50 ∧ minLength 3` is the
+  conjunction, `Nat ∣ le 100` elaborates to `Refined Nat (Constraint.le 100)`
+  with no stray auto-bound implicits, and `3 ∣ n` or `k ∣ n ∧ k ∣ m` (no
+  constraint name after `∣`) still mean divisibility. A constraint held in a
+  variable is written `Refined α c`.
+* **Refine: literals check themselves.** A numeral or string literal whose
+  expected type is `Refined α c` elaborates to `⟨lit, by decide⟩`, so
+  defaults read `discount : Nat ∣ le 100 := 0` and calls read `pct 50`; an
+  out-of-range literal is a compile error.
+* **Refine: case-insensitive choices** use `oneOfBy norm choices` and
+  `Constraint.pick`, which returns the first declared choice (click's
+  behaviour), not the input.
 * **Route: convertors are values.** A `Convertor` is a record with its laws,
   so a downstream repo registers its own (starlette's
   `register_url_convertor`) and passes a registry to `PathTemplate.compile`.
@@ -99,9 +123,10 @@ routing tests.
   (greedy with backtracking), then all captures are converted, as starlette
   matches its compiled regex and then calls `convert`. For the built-in
   convertors this equals Python's backtracking order.
-* **Route: `Allow` is the first partial route's methods**, which is what
-  starlette's `Router` does (the stack plan said "union"; starlette does not
-  take the union).
+* **Route: the `Allow` policy is a parameter** (orchestrator decision).
+  `.firstPartial`, the default, is starlette's behaviour (the first partially
+  matching route's methods, UP-027); `.unionOfPartials` is the deduplicated
+  union in route order. lean-starlette chooses.
 
 ## Deviations from starlette
 
@@ -110,7 +135,7 @@ routing tests.
 | `float` captures | IEEE doubles, rendered with `"%0.20f"` and stripped, so `0.1` renders as `0.10000000000000000555` | exact decimals (`Convertor.Fixed`), rendered with trailing zeros dropped | UP-029 |
 | End of path | the regex ends in `$`, which also matches before a trailing newline (`/int/5\n` routes with `5`) | the whole path must match | UP-030 |
 | `url_path_for` | substitutes `{name}` by `str.replace` one parameter after another, so a value containing another parameter's placeholder is rewritten | each value is rendered once, verbatim, from the template pieces | UP-031 |
-| `Allow` order | `", ".join` of a set: hash-seed dependent | the route's methods in declaration order | UP-027 |
+| `Allow` | the first partial route's methods, `", ".join` of a set: hash-seed dependent | an `AllowPolicy`: that route's methods in declaration order (default), or the union of all partial routes' methods | UP-027 |
 
 ## Tests
 

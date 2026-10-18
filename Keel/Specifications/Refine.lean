@@ -56,4 +56,9 @@ def LocEach : Prop :=
     (each v) xs = .error es →
       ∀ e ∈ es, ∃ j < xs.length, ∃ e' : ε, Located.loc e = .index j :: Located.loc e'
 
+/-- A choice up to normalisation picks the first declared match (click). -/
+def PickFind : Prop :=
+  ∀ (α : Type) [DecidableEq α] (norm : α → α) (cs : List α) (x v : α),
+    (∃ c, pick norm cs x = .ok c ∧ c.val = v) ↔ cs.find? (fun c => decide (norm c = norm x)) = some v
+
 end Keel.Spec
