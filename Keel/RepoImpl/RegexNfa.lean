@@ -25,29 +25,117 @@ namespace Keel
 
 namespace Regex
 
-/-- What an assertion reads of the character on one side of a position:
-whether there is none (an end), and whether it is a word character. -/
-def ctx (κ : Type) [CharClass κ] (p : Option Char) : Bool × Bool := (p.isNone, wordAt (CharClass.word κ) p)
+/-- What the assertions read of the character on one side of a position:
+whether there is none (an end of the text), whether it is a word character
+(the dialect's, and ASCII's), and whether it is `\n` or `\r`. The same
+record, read as a mask, says which of these bits a term reads. -/
+structure Side where
+  /-- There is no character: an end of the text. -/
+  isEnd : Bool
+  /-- A word character, as the dialect says (`CharClass.word`). -/
+  word : Bool
+  /-- An ASCII word character (`asciiWord`). -/
+  asciiWord : Bool
+  /-- `\n` -/
+  lf : Bool
+  /-- `\r` -/
+  cr : Bool
+  deriving DecidableEq, Repr, Inhabited
+
+namespace Side
+
+/-- No bit: the mask of a term that reads nothing. -/
+def nothing : Side := ⟨false, false, false, false, false⟩
+
+/-- The end of the text, as a side. -/
+def atEnd : Side := ⟨true, false, false, false, false⟩
+
+/-- The bits that both masks read. -/
+def union (a b : Side) : Side :=
+  ⟨a.isEnd || b.isEnd, a.word || b.word, a.asciiWord || b.asciiWord, a.lf || b.lf, a.cr || b.cr⟩
+
+/-- Every bit `a` reads, `b` reads. -/
+def le (a b : Side) : Bool :=
+  (!a.isEnd || b.isEnd) && (!a.word || b.word) && (!a.asciiWord || b.asciiWord) &&
+    (!a.lf || b.lf) && (!a.cr || b.cr)
+
+/-- The bits of `s` that the mask `m` reads; the others cleared. -/
+def proj (m s : Side) : Side :=
+  ⟨m.isEnd && s.isEnd, m.word && s.word, m.asciiWord && s.asciiWord, m.lf && s.lf, m.cr && s.cr⟩
+
+theorem proj_proj (m s : Side) : m.proj (m.proj s) = m.proj s := by
+  simp only [proj, ← Bool.and_assoc, Bool.and_self]
+
+end Side
+
+/-- What an assertion reads of the character on one side of a position. -/
+def ctx (κ : Type) [CharClass κ] (p : Option Char) : Side :=
+  ⟨p.isNone, wordAt (CharClass.word κ) p, wordAt asciiWord p, p == some '\n', p == some '\r'⟩
+
+theorem ctx_none (κ : Type) [CharClass κ] : ctx κ none = Side.atEnd := rfl
+
+theorem ctx_some_isEnd (κ : Type) [CharClass κ] (c : Char) : (ctx κ (some c)).isEnd = false := rfl
 
 /-- `Assertion.holds`, on the two sides' bits. -/
-def Assertion.holdsB : Assertion → Bool × Bool → Bool × Bool → Bool
-  | .start, p, _ => p.1
-  | .finish, _, n => n.1
-  | .wordBoundary, p, n => p.2 != n.2
-  | .notWordBoundary, p, n => p.2 == n.2
-  | .wordStart, p, n => !p.2 && n.2
-  | .wordEnd, p, n => p.2 && !n.2
+def Assertion.holdsB : Assertion → Side → Side → Bool
+  | .start, p, _ => p.isEnd
+  | .finish, _, n => n.isEnd
+  | .wordBoundary, p, n => p.word != n.word
+  | .notWordBoundary, p, n => p.word == n.word
+  | .wordStart, p, n => !p.word && n.word
+  | .wordEnd, p, n => p.word && !n.word
+  | .lineStart, p, _ => p.isEnd || p.lf
+  | .lineEnd, _, n => n.isEnd || n.lf
+  | .lineStartCRLF, p, n => p.isEnd || p.lf || (p.cr && !n.lf)
+  | .lineEndCRLF, p, n => n.isEnd || n.cr || (n.lf && !p.cr)
+  | .wordBoundaryAscii, p, n => p.asciiWord != n.asciiWord
+  | .notWordBoundaryAscii, p, n => p.asciiWord == n.asciiWord
+  | .wordStartAscii, p, n => !p.asciiWord && n.asciiWord
+  | .wordEndAscii, p, n => p.asciiWord && !n.asciiWord
+  | .wordStartHalf, p, _ => !p.word
+  | .wordEndHalf, _, n => !n.word
+  | .wordStartHalfAscii, p, _ => !p.asciiWord
+  | .wordEndHalfAscii, _, n => !n.asciiWord
 
 theorem Assertion.holds_eq (κ : Type) [CharClass κ] (a : Assertion) (p n : Option Char) :
     a.holds (CharClass.word κ) p n = a.holdsB (ctx κ p) (ctx κ n) := by
   cases a <;> rfl
+
+/-- The bits an assertion reads of the character before and of the one
+after; whether the one after exists is left out, as the tables always know
+it (a character is read, or the text has ended). -/
+def Assertion.reads : Assertion → Side × Side
+  | .start => (⟨true, false, false, false, false⟩, .nothing)
+  | .finish => (.nothing, .nothing)
+  | .wordBoundary | .notWordBoundary | .wordStart | .wordEnd =>
+    (⟨false, true, false, false, false⟩, ⟨false, true, false, false, false⟩)
+  | .lineStart => (⟨true, false, false, true, false⟩, .nothing)
+  | .lineEnd => (.nothing, ⟨false, false, false, true, false⟩)
+  | .lineStartCRLF => (⟨true, false, false, true, true⟩, ⟨false, false, false, true, false⟩)
+  | .lineEndCRLF => (⟨false, false, false, false, true⟩, ⟨false, false, false, true, true⟩)
+  | .wordBoundaryAscii | .notWordBoundaryAscii | .wordStartAscii | .wordEndAscii =>
+    (⟨false, false, true, false, false⟩, ⟨false, false, true, false, false⟩)
+  | .wordStartHalf => (⟨false, true, false, false, false⟩, .nothing)
+  | .wordEndHalf => (.nothing, ⟨false, true, false, false, false⟩)
+  | .wordStartHalfAscii => (⟨false, false, true, false, false⟩, .nothing)
+  | .wordEndHalfAscii => (.nothing, ⟨false, false, true, false, false⟩)
+
+/-- **An assertion reads only its bits**: two contexts that agree on them
+(and on whether the text has ended after) give the same answer. -/
+theorem Assertion.holdsB_agree (a : Assertion) {mp mn pc pc' nc nc' : Side}
+    (h : (a.reads.1.le mp && a.reads.2.le mn) = true)
+    (hp : mp.proj pc = mp.proj pc') (hn : mn.proj nc = mn.proj nc') (he : nc.isEnd = nc'.isEnd) :
+    a.holdsB pc nc = a.holdsB pc' nc' := by
+  obtain ⟨_, _, _, _, _⟩ := mp; obtain ⟨_, _, _, _, _⟩ := mn
+  simp only [Side.proj, Side.mk.injEq] at hp hn
+  cases a <;> simp_all [reads, Side.le, Side.nothing, holdsB]
 
 variable {κ : Type} [CharClass κ] [DecidableEq κ]
 
 
 /-- `nullable`, on the two sides' bits. -/
 @[specialize]
-def nullB (pc nc : Bool × Bool) : Regex κ → Bool
+def nullB (pc nc : Side) : Regex κ → Bool
   | empty => false
   | eps => true
   | cls _ => false
@@ -62,31 +150,72 @@ theorem nullable_eq (p n : Option Char) : ∀ r : Regex κ, nullable p n r = nul
   | assert a => Assertion.holds_eq κ a p n
   | alt r s | cat r s => by simp only [nullable, nullB, nullable_eq p n r, nullable_eq p n s]
 
+/-- The assertions of `r` read only the bits in `mp` (before) and `mn` (after). -/
+def within (mp mn : Side) : Regex κ → Bool
+  | assert a => a.reads.1.le mp && a.reads.2.le mn
+  | alt r s | cat r s => within mp mn r && within mp mn s
+  | star r => within mp mn r
+  | _ => true
+
+/-- The bits the assertions of `r` read: the masks of a compiled pattern. -/
+def reads : Regex κ → Side × Side
+  | assert a => a.reads
+  | alt r s | cat r s => ((reads r).1.union (reads s).1, (reads r).2.union (reads s).2)
+  | star r => reads r
+  | _ => (.nothing, .nothing)
+
+omit [CharClass κ] [DecidableEq κ] in
+/-- `nullB` reads only the bits the assertions of the term read. -/
+theorem nullB_agree {mp mn pc pc' nc nc' : Side} (hp : mp.proj pc = mp.proj pc')
+    (hn : mn.proj nc = mn.proj nc') (he : nc.isEnd = nc'.isEnd) :
+    ∀ r : Regex κ, within mp mn r = true → nullB pc nc r = nullB pc' nc' r
+  | empty, _ | eps, _ | cls _, _ | star _, _ => rfl
+  | assert a, h => a.holdsB_agree h hp hn he
+  | alt r s, h | cat r s, h => by
+    simp only [within, Bool.and_eq_true] at h
+    simp only [nullB, nullB_agree hp hn he r h.1, nullB_agree hp hn he s h.2]
+
 /-- Antimirov's linear form, in context: the derivatives of `r` by a
 character with their guarding class, when the character before has bits
-`pc` and the character read is a word character exactly when `nw`. -/
+`pc` and the character read has bits `nc`. -/
 @[specialize]
-def lin (pc : Bool × Bool) (nw : Bool) : Regex κ → List (κ × Regex κ)
+def lin (pc nc : Side) : Regex κ → List (κ × Regex κ)
   | empty => []
   | eps => []
   | cls k => [(k, eps)]
   | assert _ => []
-  | alt r s => lin pc nw r ++ lin pc nw s
+  | alt r s => lin pc nc r ++ lin pc nc s
   | cat r s =>
-    (lin pc nw r).map (fun kq => (kq.1, seq kq.2 s)) ++ (if nullB pc (false, nw) r then lin pc nw s else [])
-  | star r => (lin pc nw r).map (fun kq => (kq.1, seq kq.2 (star r)))
+    (lin pc nc r).map (fun kq => (kq.1, seq kq.2 s)) ++ (if nullB pc nc r then lin pc nc s else [])
+  | star r => (lin pc nc r).map (fun kq => (kq.1, seq kq.2 (star r)))
+
+omit [CharClass κ] in
+/-- `lin` reads only the bits the assertions of the term read. -/
+theorem lin_agree {mp mn pc pc' nc nc' : Side} (hp : mp.proj pc = mp.proj pc')
+    (hn : mn.proj nc = mn.proj nc') (he : nc.isEnd = nc'.isEnd) :
+    ∀ r : Regex κ, within mp mn r = true → lin pc nc r = lin pc' nc' r
+  | empty, _ | eps, _ | cls _, _ | assert _, _ => rfl
+  | alt r s, h => by
+    simp only [within, Bool.and_eq_true] at h
+    simp only [lin, lin_agree hp hn he r h.1, lin_agree hp hn he s h.2]
+  | cat r s, h => by
+    simp only [within, Bool.and_eq_true] at h
+    simp only [lin, lin_agree hp hn he r h.1, lin_agree hp hn he s h.2, nullB_agree hp hn he r h.1]
+  | star r, h => by
+    simp only [within] at h
+    simp only [lin, lin_agree hp hn he r h]
 
 /-- The derivatives by `c` that the linear form's classes let through. -/
 def pick (c : Char) (l : List (κ × Regex κ)) : List (Regex κ) :=
   l.filterMap fun kq => if CharClass.test kq.1 c then some kq.2 else none
 
 /-- **The partial derivatives are the linear form, filtered by `c`.** -/
-theorem pd_eq_lin (p : Option Char) (c : Char) : ∀ r : Regex κ, pd p c r = pick c (lin (ctx κ p) (CharClass.word κ c) r)
+theorem pd_eq_lin (p : Option Char) (c : Char) : ∀ r : Regex κ, pd p c r = pick c (lin (ctx κ p) (ctx κ (some c)) r)
   | empty | eps | assert _ => rfl
   | cls k => by simp only [pd, lin, pick, List.filterMap_cons, List.filterMap_nil]; split <;> rfl
   | alt r s => by simp only [pd, lin, pick, List.filterMap_append, pd_eq_lin p c r, pd_eq_lin p c s]
   | cat r s => by
-    have hn : nullable p (some c) r = nullB (ctx κ p) (false, CharClass.word κ c) r := nullable_eq p (some c) r
+    have hn : nullable p (some c) r = nullB (ctx κ p) (ctx κ (some c)) r := nullable_eq p (some c) r
     simp only [pd, lin, pick, List.filterMap_append, pd_eq_lin p c r, pd_eq_lin p c s, hn]
     congr 1
     · simp only [List.filterMap_map, List.map_filterMap]
@@ -147,39 +276,111 @@ theorem mem_dedupIds (n : Nat) (l : List Nat) (x : Nat) : x ∈ dedupIds n l ↔
   simp
 
 
-/-! ## The compiled matcher -/
+/-! ## The compiled matcher
 
-/-- A context's table slot: the character before (`pc`) and whether the one
-read is a word character (`nw`). -/
-def code (pc : Bool × Bool) (nw : Bool) : Nat :=
-  (if pc.1 then 4 else 0) + (if pc.2 then 2 else 0) + (if nw then 1 else 0)
+The tables of a pattern have a row per context its terms can tell apart: the
+masks `mp` and `mn` (`reads`) say which bits of the character before and of
+the one after any assertion of the pattern reads, and a context's slot packs
+just those bits (`code`). A pattern with `^` alone has two slots, one with
+word boundaries eight, one with no assertion but `$` one. -/
+
+/-- Append a bit to a code, if the mask reads it. -/
+@[inline] def pushBit (sel v : Bool) (acc : Nat) : Nat := if sel then 2 * acc + v.toNat else acc
+
+/-- Take the last bit off a code, if the mask read it. -/
+@[inline] def popBit (sel : Bool) (k : Nat) : Bool × Nat := if sel then (k % 2 == 1, k / 2) else (false, k)
+
+theorem popBit_pushBit (sel v : Bool) (acc : Nat) : popBit sel (pushBit sel v acc) = (sel && v, acc) := by
+  cases sel <;> cases v <;> simp [popBit, pushBit] <;> omega
+
+/-- The number of codes, for each bit the mask reads a doubling. -/
+@[inline] def widen (sel : Bool) (b : Nat) : Nat := if sel then 2 * b else b
+
+theorem pushBit_lt {sel v : Bool} {acc b : Nat} (h : acc < b) : pushBit sel v acc < widen sel b := by
+  cases sel <;> cases v <;> simp [pushBit, widen] <;> omega
+
+/-- A side's slot: the bits of `s` that the mask `m` reads. -/
+@[inline] def code (m s : Side) : Nat :=
+  pushBit m.cr s.cr (pushBit m.lf s.lf (pushBit m.asciiWord s.asciiWord (pushBit m.word s.word
+    (pushBit m.isEnd s.isEnd 0))))
+
+/-- The slot's side, with the bits the mask does not read cleared. -/
+def decode (m : Side) (k : Nat) : Side :=
+  let cr := popBit m.cr k
+  let lf := popBit m.lf cr.2
+  let aw := popBit m.asciiWord lf.2
+  let w := popBit m.word aw.2
+  ⟨(popBit m.isEnd w.2).1, w.1, aw.1, lf.1, cr.1⟩
+
+theorem decode_code (m s : Side) : decode m (code m s) = m.proj s := by
+  simp only [decode, code, popBit_pushBit, Side.proj]
+
+/-- The number of slots of a mask. -/
+def Side.size (m : Side) : Nat := widen m.cr (widen m.lf (widen m.asciiWord (widen m.word (widen m.isEnd 1))))
+
+theorem code_lt (m s : Side) : code m s < m.size :=
+  pushBit_lt (pushBit_lt (pushBit_lt (pushBit_lt (pushBit_lt Nat.zero_lt_one))))
+
+theorem Side.size_pos (m : Side) : 0 < m.size := Nat.lt_of_le_of_lt (Nat.zero_le _) (code_lt m m)
+
+/-- The slot of a context, before (`mp`) and after (`mn`) a position. -/
+@[inline] def slot (mp mn pc nc : Side) : Nat := code mp pc + mp.size * code mn nc
 
 /-- The slot's context. -/
-def decode (k : Nat) : (Bool × Bool) × Bool := ((k / 4 % 2 == 1, k / 2 % 2 == 1), k % 2 == 1)
+def unslot (mp mn : Side) (k : Nat) : Side × Side := (decode mp (k % mp.size), decode mn (k / mp.size))
 
-theorem decode_code (pc : Bool × Bool) (nw : Bool) : decode (code pc nw) = (pc, nw) := by
-  obtain ⟨a, b⟩ := pc; cases a <;> cases b <;> cases nw <;> rfl
+theorem unslot_slot (mp mn pc nc : Side) : unslot mp mn (slot mp mn pc nc) = (mp.proj pc, mn.proj nc) := by
+  have h := code_lt mp pc
+  have hs := Side.size_pos mp
+  simp only [unslot, slot, Nat.add_mul_mod_self_left, Nat.mod_eq_of_lt h, Nat.add_mul_div_left _ _ hs,
+    Nat.div_eq_of_lt h, Nat.zero_add, decode_code]
 
-theorem code_lt (pc : Bool × Bool) (nw : Bool) : code pc nw < 8 := by
-  obtain ⟨a, b⟩ := pc; cases a <;> cases b <;> cases nw <;> decide
+theorem slot_lt (mp mn pc nc : Side) : slot mp mn pc nc < mp.size * mn.size := by
+  have h₁ := code_lt mp pc
+  have h₂ := code_lt mn nc
+  unfold slot
+  calc code mp pc + mp.size * code mn nc < mp.size + mp.size * code mn nc := by omega
+    _ = mp.size * (code mn nc + 1) := by rw [Nat.mul_add, Nat.mul_one, Nat.add_comm]
+    _ ≤ mp.size * mn.size := Nat.mul_le_mul_left _ h₂
+
+omit [CharClass κ] in
+/-- A projected context reads as the context itself, for a term within the
+masks, when a character is read. -/
+theorem lin_unslot {mp mn pc nc : Side} (hn : nc.isEnd = false) {t : Regex κ} (h : within mp mn t = true) :
+    lin (unslot mp mn (slot mp mn pc nc)).1 (unslot mp mn (slot mp mn pc nc)).2 t = lin pc nc t := by
+  rw [unslot_slot]
+  obtain ⟨_, _, _, _, _⟩ := mn
+  exact lin_agree (Side.proj_proj _ _) (Side.proj_proj _ _) (by simp [Side.proj, hn]) t h
+
+omit [CharClass κ] [DecidableEq κ] in
+theorem nullB_unslot {mp mn pc nc : Side} (hn : nc.isEnd = false) {t : Regex κ} (h : within mp mn t = true) :
+    nullB (unslot mp mn (slot mp mn pc nc)).1 (unslot mp mn (slot mp mn pc nc)).2 t = nullB pc nc t := by
+  rw [unslot_slot]
+  obtain ⟨_, _, _, _, _⟩ := mn
+  exact nullB_agree (Side.proj_proj _ _) (Side.proj_proj _ _) (by simp [Side.proj, hn]) t h
 
 /-- The pattern compiled once: its derivative terms numbered (`terms[0]` is
-the pattern), and for each term and context slot, its linear form with the
-derivatives as numbers, and whether it is nullable before a character and
-at the end. The fields after the tables say they are right. -/
+the pattern), the masks of the bits its assertions read, and for each term
+and context slot, its linear form with the derivatives as numbers, and
+whether it is nullable before a character and at the end. The fields after
+the tables say they are right. -/
 structure Nfa (r : Regex κ) where
   terms : Array (Regex κ)
+  /-- The bits of the character before that the terms read. -/
+  mp : Side
+  /-- The bits of the character after that the terms read. -/
+  mn : Side
   trans : Array (Array (Array (κ × Nat)))
   nul : Array (Array Bool)
   fin : Array (Array Bool)
   start : terms[0]? = some r
-  hTrans : ∀ (j : Nat) (t : Regex κ), terms[j]? = some t → ∀ (pc : Bool × Bool) (nw : Bool),
-    ((trans[j]?.bind (·[code pc nw]?)).getD #[]).toList.map (fun e => (e.1, terms[e.2]?)) =
-      (lin pc nw t).map (fun kq => (kq.1, some kq.2))
-  hNul : ∀ (j : Nat) (t : Regex κ), terms[j]? = some t → ∀ (pc : Bool × Bool) (nw : Bool),
-    (nul[j]?.bind (·[code pc nw]?)).getD false = nullB pc (false, nw) t
-  hFin : ∀ (j : Nat) (t : Regex κ), terms[j]? = some t → ∀ (pc : Bool × Bool),
-    (fin[j]?.bind (·[code pc false]?)).getD false = nullB pc (true, false) t
+  hTrans : ∀ (j : Nat) (t : Regex κ), terms[j]? = some t → ∀ (pc nc : Side), nc.isEnd = false →
+    ((trans[j]?.bind (·[slot mp mn pc nc]?)).getD #[]).toList.map (fun e => (e.1, terms[e.2]?)) =
+      (lin pc nc t).map (fun kq => (kq.1, some kq.2))
+  hNul : ∀ (j : Nat) (t : Regex κ), terms[j]? = some t → ∀ (pc nc : Side), nc.isEnd = false →
+    (nul[j]?.bind (·[slot mp mn pc nc]?)).getD false = nullB pc nc t
+  hFin : ∀ (j : Nat) (t : Regex κ), terms[j]? = some t → ∀ (pc : Side),
+    (fin[j]?.bind (·[code mp pc]?)).getD false = nullB pc .atEnd t
 
 namespace Nfa
 
@@ -189,17 +390,25 @@ variable {r : Regex κ} (N : Nfa r) (m : Mode)
 read: the pattern's, unless the start is anchored. -/
 def restart : List Nat := if m.anchorStart then [] else [0]
 
-/-- The numbered derivatives of term `j`, with their classes. -/
-@[inline] def edges (j : Nat) (pc : Bool × Bool) (nw : Bool) : Array (κ × Nat) :=
-  (N.trans.getD j #[]).getD (code pc nw) #[]
+/-- The slot part of the character before. -/
+@[inline] def pcode (p : Option Char) : Nat := code N.mp (ctx κ p)
 
-/-- Whether term `j` is nullable before a character. -/
-@[inline] def nulAt (j : Nat) (pc : Bool × Bool) (nw : Bool) : Bool :=
-  if j < N.terms.size then (N.nul.getD j #[]).getD (code pc nw) false else false
+/-- The slot part of the character read. -/
+@[inline] def ncode (c : Char) : Nat := N.mp.size * code N.mn (ctx κ (some c))
 
-/-- Whether term `j` is nullable at the end. -/
-@[inline] def finAt (j : Nat) (pc : Bool × Bool) : Bool :=
-  if j < N.terms.size then (N.fin.getD j #[]).getD (code pc false) false else false
+theorem slot_eq (p : Option Char) (c : Char) : N.pcode p + N.ncode c = slot N.mp N.mn (ctx κ p) (ctx κ (some c)) := rfl
+
+/-- The numbered derivatives of term `j`, with their classes, in slot `k`. -/
+@[inline] def edges (j k : Nat) : Array (κ × Nat) :=
+  (N.trans.getD j #[]).getD k #[]
+
+/-- Whether term `j` is nullable before a character, in slot `k`. -/
+@[inline] def nulAt (k j : Nat) : Bool :=
+  if j < N.terms.size then (N.nul.getD j #[]).getD k false else false
+
+/-- Whether term `j` is nullable at the end, after a character with code `pk`. -/
+@[inline] def finAt (pk j : Nat) : Bool :=
+  if j < N.terms.size then (N.fin.getD j #[]).getD pk false else false
 
 theorem getD2 {β : Type} (a : Array (Array β)) (j k : Nat) (d : β) :
     (a.getD j #[]).getD k d = (a[j]?.bind (·[k]?)).getD d := by
@@ -207,15 +416,14 @@ theorem getD2 {β : Type} (a : Array (Array β)) (j k : Nat) (d : β) :
   cases a[j]? <;> simp
 
 omit [CharClass κ] in
-theorem edges_eq (j : Nat) (pc : Bool × Bool) (nw : Bool) :
-    N.edges j pc nw = (N.trans[j]?.bind (·[code pc nw]?)).getD #[] := getD2 _ _ _ _
+theorem edges_eq (j k : Nat) :
+    N.edges j k = (N.trans[j]?.bind (·[k]?)).getD #[] := getD2 _ _ _ _
 
-/-- The derivatives of the set by `c`, as numbers, and `restart`. -/
-def next (pc : Bool × Bool) (c : Char) (S : List Nat) : List Nat :=
-  let nw := CharClass.word κ c
+/-- The derivatives of the set by `c` in slot `k`, as numbers, and `restart`. -/
+def next (k : Nat) (c : Char) (S : List Nat) : List Nat :=
   dedupIds N.terms.size (restart m ++ S.flatMap fun j =>
     if j < N.terms.size then
-      (N.edges j pc nw).toList.filterMap fun e => if CharClass.test e.1 c then some e.2 else none
+      (N.edges j k).toList.filterMap fun e => if CharClass.test e.1 c then some e.2 else none
     else [])
 
 /-- Add an edge's target if its class takes `c` and it is not in yet. -/
@@ -259,15 +467,15 @@ termination_by es.size - i
 /-- `next`'s work in one pass: every live term's edges, into a seen-flag
 array and the new set. -/
 @[specialize]
-def stepGo (pc : Bool × Bool) (nw : Bool) (c : Char) : List Nat → Array Bool × List Nat → Array Bool × List Nat
+def stepGo (k : Nat) (c : Char) : List Nat → Array Bool × List Nat → Array Bool × List Nat
   | [], sa => sa
   | j :: S, (seen, acc) =>
-    stepGo pc nw c S (if j < N.terms.size then edgeLoop (N.edges j pc nw) c 0 seen acc else (seen, acc))
+    stepGo k c S (if j < N.terms.size then edgeLoop (N.edges j k) c 0 seen acc else (seen, acc))
 
 /-- `next`, with no intermediate lists (`nextFast_mem`). -/
 @[specialize]
-def nextFast (pc : Bool × Bool) (c : Char) (S : List Nat) : List Nat :=
-  (N.stepGo pc (CharClass.word κ c) c S
+def nextFast (k : Nat) (c : Char) (S : List Nat) : List Nat :=
+  (N.stepGo k c S
     (if m.anchorStart then (Array.replicate N.terms.size false, [])
      else ((Array.replicate N.terms.size false).set! 0 true, [0]))).2
 
@@ -326,17 +534,17 @@ theorem foldl_addEdge (c : Char) : ∀ (es : List (κ × Nat)) (sa : Array Bool 
       · exact .inl (.inr hx)
       · exact .inr ⟨e', he', hx⟩
 
-theorem stepGo_spec (pc : Bool × Bool) (nw : Bool) (c : Char) : ∀ (S : List Nat) (sa : Array Bool × List Nat),
-    SeenOk sa → ∀ x, x ∈ (N.stepGo pc nw c S sa).2 ↔
-      x ∈ sa.2 ∨ ∃ j ∈ S, j < N.terms.size ∧ ∃ e ∈ (N.edges j pc nw).toList, CharClass.test e.1 c = true ∧ e.2 = x
+theorem stepGo_spec (k : Nat) (c : Char) : ∀ (S : List Nat) (sa : Array Bool × List Nat),
+    SeenOk sa → ∀ x, x ∈ (N.stepGo k c S sa).2 ↔
+      x ∈ sa.2 ∨ ∃ j ∈ S, j < N.terms.size ∧ ∃ e ∈ (N.edges j k).toList, CharClass.test e.1 c = true ∧ e.2 = x
   | [], sa, _, x => by simp [stepGo]
   | j :: S, sa, h, x => by
     simp only [stepGo]
     split
     · rename_i hj
       rw [edgeLoop_eq, List.drop_zero]
-      obtain ⟨h1, h2⟩ := foldl_addEdge c (N.edges j pc nw).toList sa h
-      rw [stepGo_spec pc nw c S _ h1 x, h2]
+      obtain ⟨h1, h2⟩ := foldl_addEdge c (N.edges j k).toList sa h
+      rw [stepGo_spec k c S _ h1 x, h2]
       simp only [List.mem_cons]
       constructor
       · rintro ((hx | hx) | ⟨j', hj', hx⟩)
@@ -348,7 +556,7 @@ theorem stepGo_spec (pc : Bool × Bool) (nw : Bool) (c : Char) : ∀ (S : List N
         · exact .inl (.inr hx)
         · exact .inr ⟨j', hj', hl, hx⟩
     · rename_i hj
-      rw [stepGo_spec pc nw c S _ h x]
+      rw [stepGo_spec k c S _ h x]
       simp only [List.mem_cons]
       constructor
       · rintro (hx | ⟨j', hj', hx⟩)
@@ -359,10 +567,10 @@ theorem stepGo_spec (pc : Bool × Bool) (nw : Bool) (c : Char) : ∀ (S : List N
         · exact absurd hl hj
         · exact .inr ⟨j', hj', hl, hx⟩
 
-theorem nextFast_mem (pc : Bool × Bool) (c : Char) (S : List Nat) (x : Nat) :
-    x ∈ N.nextFast m pc c S ↔ x ∈ N.next m pc c S := by
+theorem nextFast_mem (k : Nat) (c : Char) (S : List Nat) (x : Nat) :
+    x ∈ N.nextFast m k c S ↔ x ∈ N.next m k c S := by
   unfold nextFast next
-  rw [N.stepGo_spec pc (CharClass.word κ c) c S _ ?_ x, mem_dedupIds]
+  rw [N.stepGo_spec k c S _ ?_ x, mem_dedupIds]
   · have hr : x ∈ (if m.anchorStart then ((Array.replicate N.terms.size false, []) : Array Bool × List Nat)
         else ((Array.replicate N.terms.size false).set! 0 true, [0])).2 ↔ x ∈ restart m := by
       unfold restart; split <;> rfl
@@ -397,26 +605,25 @@ theorem nextFast_mem (pc : Bool × Bool) (c : Char) (S : List Nat) (x : Nat) :
 /-- The scan over term numbers. -/
 @[specialize]
 def run : Option Char → List Char → List Nat → Bool
-  | p, [], S => S.any (N.finAt · (ctx κ p))
+  | p, [], S => S.any (N.finAt (N.pcode p))
   | p, c :: cs, S =>
-    let pc := ctx κ p
-    let nw := CharClass.word κ c
-    if !m.anchorEnd && S.any (N.nulAt · pc nw) then true
-    else run (some c) cs (N.nextFast m pc c S)
+    let k := N.pcode p + N.ncode c
+    if !m.anchorEnd && S.any (N.nulAt k) then true
+    else run (some c) cs (N.nextFast m k c S)
 
 /-! ### Caching the steps of one call
 
 Within a call the term sets met repeat (for `^(a{1,50})+$` on a run of
 `a`, after the first fifty characters every set has been seen), so the
 sets are numbered as they appear and each step is cached by (set number,
-the bits of the character before, the character). A cached step is one
+the slot code of the character before, the character). A cached step is one
 hash lookup. Past `maxStates` sets nothing more is cached and the rest of
 the text runs `run` directly, so a pattern whose sets never repeat costs one
 plain step per character. `Cache.good` says every cached step is `run`'s. -/
 
-/-- The cache key: a set's number, the bits of the character before, the
-character. -/
-abbrev Key := Nat × Bool × Bool × Char
+/-- The cache key: a set's number, the slot code of the character before
+(`pcode`), the character. -/
+abbrev Key := Nat × Nat × Char
 
 /-- The sets met so far, an index from a set to its number, and the cached
 steps. -/
@@ -425,9 +632,9 @@ structure Cache where
   index : Std.HashMap (List Nat) Nat
   trans : Std.HashMap Key (Bool × Nat)
   indexed : ∀ (S : List Nat) (j : Nat), index[S]? = some j → states[j]? = some S
-  good : ∀ (i : Nat) (b₁ b₂ : Bool) (c : Char) (acc : Bool) (j : Nat), trans[(i, b₁, b₂, c)]? = some (acc, j) →
-    ∃ S, states[i]? = some S ∧ acc = S.any (N.nulAt · (b₁, b₂) (CharClass.word κ c)) ∧
-      states[j]? = some (N.nextFast m (b₁, b₂) c S)
+  good : ∀ (i pk : Nat) (c : Char) (acc : Bool) (j : Nat), trans[(i, pk, c)]? = some (acc, j) →
+    ∃ S, states[i]? = some S ∧ acc = S.any (N.nulAt (pk + N.ncode c)) ∧
+      states[j]? = some (N.nextFast m (pk + N.ncode c) c S)
 
 /-- More sets than this in one call and nothing more is cached. -/
 def maxStates : Nat := 1024
@@ -448,7 +655,7 @@ def start (S : List Nat) : Cache N m where
     · rename_i hk; simp only [beq_iff_eq] at hk; subst hk
       simp only [Option.some.injEq] at h; subst h; rfl
     · simp at h
-  good := by intro i b₁ b₂ c acc j h; simp at h
+  good := by intro i pk c acc j h; simp at h
 
 /-- Add a set at the end. -/
 def push (d : Cache N m) (S : List Nat) : Cache N m where
@@ -466,8 +673,8 @@ def push (d : Cache N m) (S : List Nat) : Cache N m where
       · subst_vars; simp at h₁
       · exact h₁
   good := by
-    intro i b₁ b₂ c acc j h
-    obtain ⟨S₀, h₁, h₂, h₃⟩ := d.good i b₁ b₂ c acc j h
+    intro i pk c acc j h
+    obtain ⟨S₀, h₁, h₂, h₃⟩ := d.good i pk c acc j h
     refine ⟨S₀, ?_, h₂, ?_⟩
     · rw [Array.getElem?_push]; split
       · subst_vars; simp at h₁
@@ -500,35 +707,35 @@ theorem intern_spec (d : Cache N m) (S : List Nat) :
   · exact ⟨push_extends d S, by simp [push]⟩
 
 /-- Record a step that is `run`'s. -/
-def record (d : Cache N m) (i : Nat) (pc : Bool × Bool) (c : Char) (j : Nat) (S : List Nat)
-    (hi : d.states[i]? = some S) (hj : d.states[j]? = some (N.nextFast m pc c S)) : Cache N m where
+def record (d : Cache N m) (i pk : Nat) (c : Char) (j : Nat) (S : List Nat)
+    (hi : d.states[i]? = some S) (hj : d.states[j]? = some (N.nextFast m (pk + N.ncode c) c S)) : Cache N m where
   states := d.states
   index := d.index
   indexed := d.indexed
-  trans := d.trans.insert (i, pc.1, pc.2, c) (S.any (N.nulAt · pc (CharClass.word κ c)), j)
+  trans := d.trans.insert (i, pk, c) (S.any (N.nulAt (pk + N.ncode c)), j)
   good := by
-    intro i' b₁ b₂ c' acc j' h
+    intro i' pk' c' acc j' h
     rw [Std.HashMap.getElem?_insert] at h
     split at h
     · rename_i hk
       simp only [beq_iff_eq, Prod.mk.injEq] at hk
-      obtain ⟨rfl, rfl, rfl, rfl⟩ := hk
+      obtain ⟨rfl, rfl, rfl⟩ := hk
       simp only [Option.some.injEq, Prod.mk.injEq] at h
       obtain ⟨rfl, rfl⟩ := h
       exact ⟨S, hi, rfl, hj⟩
-    · exact d.good i' b₁ b₂ c' acc j' h
+    · exact d.good i' pk' c' acc j' h
 
 /-- The step from set `i` (`S`) by `c`, computed and recorded. -/
 @[specialize]
-def advance (d : Cache N m) (i : Nat) (pc : Bool × Bool) (c : Char) (S : List Nat) (hS : d.states[i]? = some S) :
+def advance (d : Cache N m) (i pk : Nat) (c : Char) (S : List Nat) (hS : d.states[i]? = some S) :
     Cache N m × Nat :=
-  let S' := N.nextFast m pc c S
+  let S' := N.nextFast m (pk + N.ncode c) c S
   let hs := d.intern_spec S'
-  ((d.intern S').1.record i pc c (d.intern S').2 S (hs.1 _ _ hS) hs.2, (d.intern S').2)
+  ((d.intern S').1.record i pk c (d.intern S').2 S (hs.1 _ _ hS) hs.2, (d.intern S').2)
 
-theorem advance_spec (d : Cache N m) (i : Nat) (pc : Bool × Bool) (c : Char) (S : List Nat)
+theorem advance_spec (d : Cache N m) (i pk : Nat) (c : Char) (S : List Nat)
     (hS : d.states[i]? = some S) :
-    (d.advance i pc c S hS).1.states[(d.advance i pc c S hS).2]? = some (N.nextFast m pc c S) :=
+    (d.advance i pk c S hS).1.states[(d.advance i pk c S hS).2]? = some (N.nextFast m (pk + N.ncode c) c S) :=
   (d.intern_spec _).2
 
 end Cache
@@ -536,21 +743,21 @@ end Cache
 /-- `run`, through the cache. -/
 @[specialize]
 def crun (d : Cache N m) (i : Nat) (p : Option Char) : List Char → Bool
-  | [] => (d.states[i]?.getD []).any (N.finAt · (ctx κ p))
+  | [] => (d.states[i]?.getD []).any (N.finAt (N.pcode p))
   | c :: cs =>
-    let pc := ctx κ p
-    match d.trans[(i, pc.1, pc.2, c)]? with
+    let pk := N.pcode p
+    match d.trans[(i, pk, c)]? with
     | some (acc, j) => if !m.anchorEnd && acc then true else crun d j (some c) cs
     | none =>
       match hS : d.states[i]? with
       | none => false
       | some S =>
-        let nw := CharClass.word κ c
-        if !m.anchorEnd && S.any (N.nulAt · pc nw) then true
+        let k := pk + N.ncode c
+        if !m.anchorEnd && S.any (N.nulAt k) then true
         else if d.states.size < maxStates then
-          let a := d.advance i pc c S hS
+          let a := d.advance i pk c S hS
           crun a.1 a.2 (some c) cs
-        else N.run m (some c) cs (N.nextFast m pc c S)
+        else N.run m (some c) cs (N.nextFast m k c S)
 
 theorem crun_eq : ∀ (cs : List Char) (d : Cache N m) (i : Nat) (p : Option Char) (S : List Nat),
     d.states[i]? = some S → N.crun m d i p cs = N.run m p cs S
@@ -560,7 +767,7 @@ theorem crun_eq : ∀ (cs : List Char) (d : Cache N m) (i : Nat) (p : Option Cha
     simp only
     split
     · rename_i acc j hc
-      obtain ⟨S₀, h₀, hacc, hj⟩ := d.good _ _ _ _ _ _ hc
+      obtain ⟨S₀, h₀, hacc, hj⟩ := d.good _ _ _ _ _ hc
       rw [h] at h₀; cases h₀
       simp only [run, ← hacc]
       split
@@ -575,7 +782,7 @@ theorem crun_eq : ∀ (cs : List Char) (d : Cache N m) (i : Nat) (p : Option Cha
         split
         · rfl
         · split
-          · exact crun_eq cs _ _ (some c) _ (Cache.advance_spec d i (ctx κ p) c S₁ hS)
+          · exact crun_eq cs _ _ (some c) _ (Cache.advance_spec d i (N.pcode p) c S₁ hS)
           · rfl
 
 /-- Below this length a text runs `run` directly: too short for the
@@ -601,11 +808,11 @@ end Nfa
 
 variable [Hashable κ]
 
-/-- Every context slot. -/
-def combos : List ((Bool × Bool) × Bool) := (List.range 8).map decode
+/-- Every context slot of the masks. -/
+def combos (mp mn : Side) : List (Side × Side) := (List.range (mp.size * mn.size)).map (unslot mp mn)
 
-theorem mem_combos (pc : Bool × Bool) (nw : Bool) : (pc, nw) ∈ combos := by
-  rw [← decode_code pc nw]; exact List.mem_map.2 ⟨_, List.mem_range.2 (code_lt pc nw), rfl⟩
+theorem mem_combos (mp mn pc nc : Side) : unslot mp mn (slot mp mn pc nc) ∈ combos mp mn :=
+  List.mem_map.2 ⟨_, List.mem_range.2 (slot_lt mp mn pc nc), rfl⟩
 
 /-- Number `q`, adding it if it is new. -/
 @[specialize]
@@ -614,41 +821,22 @@ def intern (st : Array (Regex κ) × Std.HashMap (Regex κ) Nat) (q : Regex κ) 
 
 /-- No assertion but `$` inside: then the context never matters. -/
 @[specialize]
-def ctxFree : Regex κ → Bool
-  | assert .finish => true
-  | assert _ => false
-  | alt r s => ctxFree r && ctxFree s
-  | cat r s => ctxFree r && ctxFree s
-  | star r => ctxFree r
-  | _ => true
+def ctxFree (r : Regex κ) : Bool := within .nothing .nothing r
 
 omit [CharClass κ] [DecidableEq κ] [Hashable κ] in
-theorem nullB_ctxFree (pc nc pc' nc' : Bool × Bool) (hn : nc.1 = nc'.1) :
-    ∀ r : Regex κ, ctxFree r = true → nullB pc nc r = nullB pc' nc' r
-  | empty, _ | eps, _ | cls _, _ | star _, _ => rfl
-  | assert a, h => by cases a <;> simp_all [ctxFree, nullB, Assertion.holdsB]
-  | alt r s, h | cat r s, h => by
-    simp only [ctxFree, Bool.and_eq_true] at h
-    simp only [nullB, nullB_ctxFree pc nc pc' nc' hn r h.1, nullB_ctxFree pc nc pc' nc' hn s h.2]
+theorem nullB_ctxFree (pc nc pc' nc' : Side) (hn : nc.isEnd = nc'.isEnd) (r : Regex κ) (h : ctxFree r = true) :
+    nullB pc nc r = nullB pc' nc' r :=
+  nullB_agree (mp := .nothing) (mn := .nothing) (pc := pc) (pc' := pc') (nc := nc) (nc' := nc') rfl rfl hn r h
 
 omit [CharClass κ] [Hashable κ] in
-theorem lin_ctxFree (pc : Bool × Bool) (nw : Bool) :
-    ∀ r : Regex κ, ctxFree r = true → lin pc nw r = lin (false, false) false r
-  | empty, _ | eps, _ | cls _, _ | assert _, _ => rfl
-  | alt r s, h => by
-    simp only [ctxFree, Bool.and_eq_true] at h
-    simp only [lin, lin_ctxFree pc nw r h.1, lin_ctxFree pc nw s h.2]
-  | cat r s, h => by
-    simp only [ctxFree, Bool.and_eq_true] at h
-    simp only [lin, lin_ctxFree pc nw r h.1, lin_ctxFree pc nw s h.2,
-      nullB_ctxFree pc (false, nw) (false, false) (false, false) rfl r h.1]
-  | star r, h => by
-    simp only [ctxFree] at h
-    simp only [lin, lin_ctxFree pc nw r h]
+theorem lin_ctxFree (pc nc : Side) (hn : nc.isEnd = false) (r : Regex κ) (h : ctxFree r = true) :
+    lin pc nc r = lin .nothing .nothing r :=
+  lin_agree (mp := .nothing) (mn := .nothing) (pc := pc) (pc' := .nothing) (nc := nc) (nc' := .nothing) rfl rfl hn r h
 
 /-- The slots whose linear forms differ: one when the context never matters. -/
 @[specialize]
-def slots (t : Regex κ) : List ((Bool × Bool) × Bool) := if ctxFree t then [((false, false), false)] else combos
+def slots (mp mn : Side) (t : Regex κ) : List (Side × Side) :=
+  if ctxFree t then [(.nothing, .nothing)] else combos mp mn
 
 /-- The pattern and its partial derivatives `PD r` (at most one per character
 class), numbered, the pattern first. Every derivative of a numbered term is
@@ -666,112 +854,130 @@ def numbered (idx : Std.HashMap (Regex κ) Nat) (l : List (κ × Regex κ)) : Ar
 /-- A term's table row: its linear form in each slot, with the derivatives
 as numbers (computed once when the context never matters). -/
 @[specialize]
-def transRow (idx : Std.HashMap (Regex κ) Nat) (t : Regex κ) : Array (Array (κ × Nat)) :=
+def transRow (mp mn : Side) (idx : Std.HashMap (Regex κ) Nat) (t : Regex κ) : Array (Array (κ × Nat)) :=
   if ctxFree t then
-    let e := numbered idx (lin (false, false) false t)
-    (Array.range 8).map fun _ => e
-  else (Array.range 8).map fun k => numbered idx (lin (decode k).1 (decode k).2 t)
+    let e := numbered idx (lin .nothing .nothing t)
+    (Array.range (mp.size * mn.size)).map fun _ => e
+  else (Array.range (mp.size * mn.size)).map fun k => numbered idx (lin (unslot mp mn k).1 (unslot mp mn k).2 t)
 
 omit [CharClass κ] in
-theorem transRow_get (idx : Std.HashMap (Regex κ) Nat) (t : Regex κ) (pc : Bool × Bool) (nw : Bool) :
-    (transRow idx t)[code pc nw]? = some (numbered idx (lin pc nw t)) := by
-  have hk := code_lt pc nw
+theorem transRow_get {mp mn : Side} (idx : Std.HashMap (Regex κ) Nat) {t : Regex κ} (ht : within mp mn t = true)
+    (pc nc : Side) (hn : nc.isEnd = false) :
+    (transRow mp mn idx t)[slot mp mn pc nc]? = some (numbered idx (lin pc nc t)) := by
+  have hk := slot_lt mp mn pc nc
   unfold transRow
   split
-  · rename_i hf; simp [hk, lin_ctxFree pc nw t hf]
-  · simp [hk, decode_code]
+  · rename_i hf; simp [hk, lin_ctxFree pc nc hn t hf]
+  · simp [hk, lin_unslot hn ht]
 
 /-- A term's nullability before a character, in each slot. -/
 @[specialize]
-def nulRow (t : Regex κ) : Array Bool :=
+def nulRow (mp mn : Side) (t : Regex κ) : Array Bool :=
   if ctxFree t then
-    let b := nullB (false, false) (false, false) t
-    (Array.range 8).map fun _ => b
-  else (Array.range 8).map fun k => nullB (decode k).1 (false, (decode k).2) t
+    let b := nullB .nothing .nothing t
+    (Array.range (mp.size * mn.size)).map fun _ => b
+  else (Array.range (mp.size * mn.size)).map fun k => nullB (unslot mp mn k).1 (unslot mp mn k).2 t
 
 omit [CharClass κ] [DecidableEq κ] [Hashable κ] in
-theorem nulRow_get (t : Regex κ) (pc : Bool × Bool) (nw : Bool) :
-    (nulRow t)[code pc nw]? = some (nullB pc (false, nw) t) := by
-  have hk := code_lt pc nw
+theorem nulRow_get {mp mn : Side} {t : Regex κ} (ht : within mp mn t = true) (pc nc : Side) (hn : nc.isEnd = false) :
+    (nulRow mp mn t)[slot mp mn pc nc]? = some (nullB pc nc t) := by
+  have hk := slot_lt mp mn pc nc
   unfold nulRow
   split
-  · rename_i hf; simp [hk, nullB_ctxFree pc (false, nw) (false, false) (false, false) rfl t hf]
-  · simp [hk, decode_code]
+  · rename_i hf; simp [hk, nullB_ctxFree pc nc .nothing .nothing hn t hf]
+  · simp [hk, nullB_unslot hn ht]
 
-/-- A term's nullability at the end, in each slot. -/
+/-- A term's nullability at the end, after a character in each slot. -/
 @[specialize]
-def finRow (t : Regex κ) : Array Bool :=
+def finRow (mp : Side) (t : Regex κ) : Array Bool :=
   if ctxFree t then
-    let b := nullB (false, false) (true, false) t
-    (Array.range 8).map fun _ => b
-  else (Array.range 8).map fun k => nullB (decode k).1 (true, false) t
+    let b := nullB .nothing .atEnd t
+    (Array.range mp.size).map fun _ => b
+  else (Array.range mp.size).map fun k => nullB (decode mp k) .atEnd t
 
 omit [CharClass κ] [DecidableEq κ] [Hashable κ] in
-theorem finRow_get (t : Regex κ) (pc : Bool × Bool) :
-    (finRow t)[code pc false]? = some (nullB pc (true, false) t) := by
-  have hk := code_lt pc false
+theorem finRow_get {mp mn : Side} {t : Regex κ} (ht : within mp mn t = true) (pc : Side) :
+    (finRow mp t)[code mp pc]? = some (nullB pc .atEnd t) := by
+  have hk := code_lt mp pc
   unfold finRow
   split
-  · rename_i hf; simp [hk, nullB_ctxFree pc (true, false) (false, false) (true, false) rfl t hf]
-  · simp [hk, decode_code]
+  · rename_i hf; simp [hk, nullB_ctxFree pc .atEnd .nothing .atEnd rfl t hf]
+  · simp only [Array.getElem?_map, Array.getElem?_range, hk, ↓reduceIte, Option.map_some, Option.some.injEq]
+    rw [decode_code]
+    exact nullB_agree (mn := mn) (Side.proj_proj _ _) rfl rfl t ht
 
-/-- Every derivative of `t` was numbered, and its number stands for it. -/
+/-- Every derivative of `t` was numbered, and its number stands for it; and
+its assertions read only the masks' bits. -/
 @[specialize]
-def checkTerm (terms : Array (Regex κ)) (idx : Std.HashMap (Regex κ) Nat) (t : Regex κ) : Bool :=
-  (slots t).all fun pn => (lin pn.1 pn.2 t).all fun kq => decide (terms[idx.getD kq.2 0]? = some kq.2)
+def checkTerm (mp mn : Side) (terms : Array (Regex κ)) (idx : Std.HashMap (Regex κ) Nat) (t : Regex κ) : Bool :=
+  within mp mn t &&
+    (slots mp mn t).all fun pn => (lin pn.1 pn.2 t).all fun kq => decide (terms[idx.getD kq.2 0]? = some kq.2)
 
 omit [CharClass κ] in
-theorem checkTerm_spec {terms : Array (Regex κ)} {idx : Std.HashMap (Regex κ) Nat} {t : Regex κ}
-    (h : checkTerm terms idx t = true) (pc : Bool × Bool) (nw : Bool) :
-    ∀ kq ∈ lin pc nw t, terms[idx.getD kq.2 0]? = some kq.2 := by
+theorem checkTerm_spec {mp mn : Side} {terms : Array (Regex κ)} {idx : Std.HashMap (Regex κ) Nat} {t : Regex κ}
+    (h : checkTerm mp mn terms idx t = true) (pc nc : Side) (hn : nc.isEnd = false) :
+    ∀ kq ∈ lin pc nc t, terms[idx.getD kq.2 0]? = some kq.2 := by
   intro kq hkq
   unfold checkTerm slots at h
+  rw [Bool.and_eq_true] at h
+  obtain ⟨hw, h⟩ := h
   split at h
   · rename_i hf
-    rw [lin_ctxFree pc nw t hf] at hkq
-    have h1 := List.all_eq_true.1 h ((false, false), false) (by simp)
+    rw [lin_ctxFree pc nc hn t hf] at hkq
+    have h1 := List.all_eq_true.1 h (.nothing, .nothing) (by simp)
     have h2 := List.all_eq_true.1 h1 kq hkq
     simpa using h2
-  · have h1 := List.all_eq_true.1 h (pc, nw) (mem_combos pc nw)
+  · rw [← lin_unslot hn hw] at hkq
+    have h1 := List.all_eq_true.1 h _ (mem_combos mp mn pc nc)
     have h2 := List.all_eq_true.1 h1 kq hkq
     simpa using h2
 
 theorem range8_get {k : Nat} (h : k < 8) : (Array.range 8)[k]? = some k := by
   simp [h]
 
-/-- Compile `r`: number its derivative terms and fill the tables, checking
-the numbering (`none` if it were incomplete, and then the plain scan runs). -/
+/-- Compile `r`: number its derivative terms, find the bits its assertions
+read, and fill the tables, checking the numbering (`none` if it were
+incomplete, and then the plain scan runs). -/
 @[specialize]
 def Nfa.build (r : Regex κ) : Option (Nfa r) :=
   let st := numberTerms r
   let terms := st.1
   let idx := st.2
+  let mp := (reads r).1
+  let mn := (reads r).2
   if h0 : terms[0]? = some r then
-    if hc : terms.all (checkTerm terms idx) = true then
+    if hc : terms.all (checkTerm mp mn terms idx) = true then
+      have hchk : ∀ (j : Nat) (t : Regex κ), terms[j]? = some t → checkTerm mp mn terms idx t = true := by
+        intro j t ht
+        have hj : j < terms.size := by
+          rcases Nat.lt_or_ge j terms.size with h | h
+          · exact h
+          · simp [Array.getElem?_eq_none h] at ht
+        have htj : terms[j] = t := by simpa [hj] using ht
+        have := (Array.all_eq_true.1 hc) j hj
+        rwa [htj] at this
+      have hw : ∀ (j : Nat) (t : Regex κ), terms[j]? = some t → within mp mn t = true := fun j t ht => by
+        have := hchk j t ht
+        unfold checkTerm at this
+        exact (Bool.and_eq_true _ _ ▸ this).1
       some {
-        terms, trans := terms.map (transRow idx), nul := terms.map nulRow, fin := terms.map finRow
+        terms, mp, mn
+        trans := terms.map (transRow mp mn idx), nul := terms.map (nulRow mp mn), fin := terms.map (finRow mp)
         start := h0
         hTrans := by
-          intro j t ht pc nw
-          have hj : j < terms.size := by
-            rcases Nat.lt_or_ge j terms.size with h | h
-            · exact h
-            · simp [Array.getElem?_eq_none h] at ht
-          have htj : terms[j] = t := by simpa [hj] using ht
-          have hchk := (Array.all_eq_true.1 hc) j hj
-          rw [htj] at hchk
-          simp only [Array.getElem?_map, ht, Option.map_some, Option.bind_some, transRow_get,
+          intro j t ht pc nc hn
+          simp only [Array.getElem?_map, ht, Option.map_some, Option.bind_some, transRow_get idx (hw j t ht) pc nc hn,
             Option.getD_some, numbered, List.toList_toArray, List.map_map]
           apply List.map_congr_left
           intro kq hkq
           simp only [Function.comp]
-          rw [checkTerm_spec hchk pc nw kq hkq]
+          rw [checkTerm_spec (hchk j t ht) pc nc hn kq hkq]
         hNul := by
-          intro j t ht pc nw
-          simp [Array.getElem?_map, ht, nulRow_get]
+          intro j t ht pc nc hn
+          simp [Array.getElem?_map, ht, nulRow_get (hw j t ht) pc nc hn]
         hFin := by
           intro j t ht pc
-          simp [Array.getElem?_map, ht, finRow_get] }
+          simp [Array.getElem?_map, ht, finRow_get (hw j t ht) pc] }
     else none
   else none
 

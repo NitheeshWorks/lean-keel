@@ -11,9 +11,11 @@ Python's `re` for starlette's `allow_origin_regex`, and so on.
   without `\n`) and its notion of a word character, which the word
   assertions read. `Regex.Cls α` closes any atoms under union, intersection,
   difference, symmetric difference and negation.
-* **Zero-width assertions** (`^`, `$`, `\b`, …) are terms. Whether one holds
-  depends only on the characters on either side of the position, so the
-  semantics carries the character before and the character after each
+* **Zero-width assertions** (`^`, `$`, `\b`, …) are terms: the text's ends,
+  line ends (`\n`, or `\r\n` taken as one break), and word boundaries over
+  the dialect's word characters or ASCII ones, whole or half. Whether one
+  holds depends only on the characters on either side of the position, so
+  the semantics carries the character before and the character after each
   matched segment.
 * **The mode** says where a match may start and end: anywhere (Rust's
   `is_match`, Python's `re.search`), at the start (`re.match`), or the whole
@@ -62,6 +64,32 @@ inductive Assertion where
   | wordStart
   /-- `\>` -/
   | wordEnd
+  /-- `(?m)^`: the start of the text or of a line (after `\n`). -/
+  | lineStart
+  /-- `(?m)$`: the end of the text or of a line (before `\n`). -/
+  | lineEnd
+  /-- `(?mR)^`: the start of the text or of a line, after `\n` or after a
+  `\r` not followed by `\n` (never between the `\r` and `\n` of `\r\n`). -/
+  | lineStartCRLF
+  /-- `(?mR)$`: the end of the text or of a line, before `\r` or before a
+  `\n` not preceded by `\r` (never between the `\r` and `\n` of `\r\n`). -/
+  | lineEndCRLF
+  /-- `(?-u:\b)`: `\b` over the ASCII word characters `[0-9A-Za-z_]`. -/
+  | wordBoundaryAscii
+  /-- `(?-u:\B)` -/
+  | notWordBoundaryAscii
+  /-- `(?-u:\<)` -/
+  | wordStartAscii
+  /-- `(?-u:\>)` -/
+  | wordEndAscii
+  /-- `\b{start-half}`: no word character before (whatever follows). -/
+  | wordStartHalf
+  /-- `\b{end-half}`: no word character after (whatever precedes). -/
+  | wordEndHalf
+  /-- `(?-u:\b{start-half})` -/
+  | wordStartHalfAscii
+  /-- `(?-u:\b{end-half})` -/
+  | wordEndHalfAscii
   deriving DecidableEq, Hashable, Repr, Inhabited
 
 /-- Where a match may lie in the text. -/

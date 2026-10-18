@@ -46,6 +46,9 @@ def wordAt (word : Char → Bool) : Option Char → Bool
   | some c => word c
   | none => false
 
+/-- The ASCII word characters `[0-9A-Za-z_]`, for `(?-u:\b)` and its kin. -/
+def asciiWord (c : Char) : Bool := c.isAlphanum || c == '_'
+
 /-- Whether an assertion holds between the character before (`p`) and the
 character after (`n`); `none` is an end of the text. -/
 def Assertion.holds (word : Char → Bool) : Assertion → Option Char → Option Char → Bool
@@ -55,6 +58,18 @@ def Assertion.holds (word : Char → Bool) : Assertion → Option Char → Optio
   | .notWordBoundary, p, n => wordAt word p == wordAt word n
   | .wordStart, p, n => !wordAt word p && wordAt word n
   | .wordEnd, p, n => wordAt word p && !wordAt word n
+  | .lineStart, p, _ => p.isNone || p == some '\n'
+  | .lineEnd, _, n => n.isNone || n == some '\n'
+  | .lineStartCRLF, p, n => p.isNone || p == some '\n' || (p == some '\r' && !(n == some '\n'))
+  | .lineEndCRLF, p, n => n.isNone || n == some '\r' || (n == some '\n' && !(p == some '\r'))
+  | .wordBoundaryAscii, p, n => wordAt asciiWord p != wordAt asciiWord n
+  | .notWordBoundaryAscii, p, n => wordAt asciiWord p == wordAt asciiWord n
+  | .wordStartAscii, p, n => !wordAt asciiWord p && wordAt asciiWord n
+  | .wordEndAscii, p, n => wordAt asciiWord p && !wordAt asciiWord n
+  | .wordStartHalf, p, _ => !wordAt word p
+  | .wordEndHalf, _, n => !wordAt word n
+  | .wordStartHalfAscii, p, _ => !wordAt asciiWord p
+  | .wordEndHalfAscii, _, n => !wordAt asciiWord n
 
 end Regex
 

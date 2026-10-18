@@ -243,7 +243,7 @@ theorem lt_of_some {j : Nat} {t : Regex κ} (h : N.terms[j]? = some t) : j < N.t
   · simp [Array.getElem?_eq_none h'] at h
 
 theorem any_nul {S : List Nat} {T : List (Regex κ)} (hd : N.Den S T) (p : Option Char) (c : Char) :
-    S.any (N.nulAt · (ctx κ p) (CharClass.word κ c)) = T.any (nullable p (some c)) := by
+    S.any (N.nulAt (N.pcode p + N.ncode c)) = T.any (nullable p (some c)) := by
   apply Bool.eq_iff_iff.2
   simp only [List.any_eq_true]
   constructor
@@ -252,18 +252,18 @@ theorem any_nul {S : List Nat} {T : List (Regex κ)} (hd : N.Den S T) (p : Optio
     split at hn
     · rename_i hlt
       obtain ⟨t, ht⟩ := N.some_of_lt hlt
-      rw [getD2, N.hNul j t ht] at hn
+      rw [getD2, N.slot_eq, N.hNul j t ht _ _ (ctx_some_isEnd κ c)] at hn
       exact ⟨t, (hd t).2 ⟨j, hj, ht⟩, by rw [nullable_eq]; exact hn⟩
     · cases hn
   · rintro ⟨q, hq, hn⟩
     obtain ⟨j, hj, ht⟩ := (hd q).1 hq
     refine ⟨j, hj, ?_⟩
     unfold nulAt
-    simp only [N.lt_of_some ht, ↓reduceIte]; rw [getD2, N.hNul j q ht]
+    simp only [N.lt_of_some ht, ↓reduceIte]; rw [getD2, N.slot_eq, N.hNul j q ht _ _ (ctx_some_isEnd κ c)]
     rw [nullable_eq] at hn; exact hn
 
 theorem any_fin {S : List Nat} {T : List (Regex κ)} (hd : N.Den S T) (p : Option Char) :
-    S.any (N.finAt · (ctx κ p)) = T.any (nullable p none) := by
+    S.any (N.finAt (N.pcode p)) = T.any (nullable p none) := by
   apply Bool.eq_iff_iff.2
   simp only [List.any_eq_true]
   constructor
@@ -272,25 +272,26 @@ theorem any_fin {S : List Nat} {T : List (Regex κ)} (hd : N.Den S T) (p : Optio
     split at hn
     · rename_i hlt
       obtain ⟨t, ht⟩ := N.some_of_lt hlt
-      rw [getD2, N.hFin j t ht] at hn
-      exact ⟨t, (hd t).2 ⟨j, hj, ht⟩, by rw [nullable_eq]; exact hn⟩
+      rw [getD2, pcode, N.hFin j t ht] at hn
+      exact ⟨t, (hd t).2 ⟨j, hj, ht⟩, by rw [nullable_eq, ctx_none]; exact hn⟩
     · cases hn
   · rintro ⟨q, hq, hn⟩
     obtain ⟨j, hj, ht⟩ := (hd q).1 hq
     refine ⟨j, hj, ?_⟩
     unfold finAt
-    simp only [N.lt_of_some ht, ↓reduceIte]; rw [getD2, N.hFin j q ht]
-    rw [nullable_eq] at hn; exact hn
+    simp only [N.lt_of_some ht, ↓reduceIte]; rw [getD2, pcode, N.hFin j q ht]
+    rw [nullable_eq, ctx_none] at hn; exact hn
 
 /-- One term's numbered derivatives stand for its partial derivatives. -/
 theorem edges_den {j : Nat} {t : Regex κ} (ht : N.terms[j]? = some t) (p : Option Char) (c : Char) (q : Regex κ) :
-    (∃ e ∈ (N.edges j (ctx κ p) (CharClass.word κ c)).toList, CharClass.test e.1 c = true ∧ N.terms[e.2]? = some q) ↔
+    (∃ e ∈ (N.edges j (N.pcode p + N.ncode c)).toList, CharClass.test e.1 c = true ∧ N.terms[e.2]? = some q) ↔
       q ∈ pd p c t := by
   rw [pd_eq_lin, pick, List.mem_filterMap]
-  have hm := N.hTrans j t ht (ctx κ p) (CharClass.word κ c)
+  have hm := N.hTrans j t ht (ctx κ p) (ctx κ (some c)) (ctx_some_isEnd κ c)
+  rw [← N.slot_eq] at hm
   constructor
   · rintro ⟨e, he, hc, hq⟩
-    have : (e.1, some q) ∈ (lin (ctx κ p) (CharClass.word κ c) t).map (fun kq => (kq.1, some kq.2)) := by
+    have : (e.1, some q) ∈ (lin (ctx κ p) (ctx κ (some c)) t).map (fun kq => (kq.1, some kq.2)) := by
       rw [← hm, List.mem_map]; exact ⟨e, by rw [← N.edges_eq]; exact he, by rw [hq]⟩
     obtain ⟨kq, hkq, he'⟩ := List.mem_map.1 this
     simp only [Prod.mk.injEq, Option.some.injEq] at he'
@@ -299,7 +300,7 @@ theorem edges_den {j : Nat} {t : Regex κ} (ht : N.terms[j]? = some t) (p : Opti
     split at hc
     · rename_i htest
       simp only [Option.some.injEq] at hc
-      have : (kq.1, some kq.2) ∈ ((N.edges j (ctx κ p) (CharClass.word κ c)).toList).map (fun e => (e.1, N.terms[e.2]?)) := by
+      have : (kq.1, some kq.2) ∈ ((N.edges j (N.pcode p + N.ncode c)).toList).map (fun e => (e.1, N.terms[e.2]?)) := by
         rw [N.edges_eq, hm, List.mem_map]; exact ⟨kq, hkq, rfl⟩
       obtain ⟨e, he, he'⟩ := List.mem_map.1 this
       simp only [Prod.mk.injEq] at he'
@@ -307,7 +308,7 @@ theorem edges_den {j : Nat} {t : Regex κ} (ht : N.terms[j]? = some t) (p : Opti
     · cases hc
 
 theorem next_den {S : List Nat} {T : List (Regex κ)} (hd : N.Den S T) (p : Option Char) (c : Char) :
-    N.Den (N.next m (ctx κ p) c S) (Regex.next m r p c T) := by
+    N.Den (N.next m (N.pcode p + N.ncode c) c S) (Regex.next m r p c T) := by
   intro q
   rw [mem_next]
   simp only [Nfa.next, mem_dedupIds, List.mem_append, List.mem_flatMap]
