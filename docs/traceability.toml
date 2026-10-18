@@ -433,5 +433,5 @@ upstream = "pydantic-core regex (Rust regex crate)"
 title = "A pattern compiles once to numbered linear-form tables with a per-call step cache; the compiled matcher is the scan"
 status = "implemented"
 realises = ["Keel.Regex.Nfa.build", "Keel.Regex.Nfa.accepts", "Keel.Regex.compile", "Keel.Regex.Matcher"]
-theorem = ["Keel.Regex.Nfa.accepts_eq", "Keel.Regex.Nfa.crun_eq", "Keel.Regex.compile_test_iff", "Keel.Regex.lin_agree", "Keel.Regex.nullB_agree", "Keel.Regex.Nfa.slot_eq"]
-test = ["examples/Examples/OriginRegex.lean", "tests/Props.lean::Regex.compile: the compiled tables are built and agree with the scan, every assertion, every mode"]
+theorem = ["Keel.Regex.Nfa.accepts_eq", "Keel.Regex.Nfa.crun_eq", "Keel.Regex.compile_test_iff", "Keel.Regex.lin_agree", "Keel.Regex.nullB_agree", "Keel.Regex.atSlot_linS", "Keel.Regex.Nfa.trans_eq", "Keel.Regex.memoRow_get"]
+test = ["examples/Examples/OriginRegex.lean", "tests/Props.lean::Regex.compile: the compiled tables are built and agree with the scan, every assertion, every mode", "tests/Bench.lean::compile (?mR)^(\\\\b[a-z]{1,30}\\\\b\\\\s?){1,20}$"]

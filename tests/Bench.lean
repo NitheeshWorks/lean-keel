@@ -54,6 +54,75 @@ def timeMs {α : Type} (f : Unit → α) (use : α → Bool) : IO (Bool × Nat) 
   let t1 ← IO.monoNanosNow
   pure (r, (t1 - t0) / 1000000)
 
+/-! ## Compiling patterns with context assertions
+
+The bench family lean-pydantic ships, `(\b[a-z]{1,30}\b\s?){1,20}`, under
+`^ $`, `(?m)`, `(?mR)`, with an ASCII `\b` and half boundaries (critic-1's
+rows on z5puu6tl9gaw). A pattern with the new assertions may compile at most
+twice as long as the same pattern with the old `^`, `$`, `\b` (the `base`
+row), and each row has an absolute bound. -/
+
+/-- A small Rust-like dialect: ranges, `\s`, `\w`, `.`. -/
+inductive Atom where
+  | range (lo hi : Char)
+  | space
+  | word
+  | dot
+  deriving DecidableEq, Hashable, Repr
+
+def isW (c : Char) : Bool := c.isAlphanum || c == '_' || (c.toNat ≥ 0xC0 && c.toNat ≠ 0xD7 && c.toNat ≠ 0xF7)
+
+instance : CharClass Atom where
+  test
+    | .range lo hi, c => lo ≤ c && c ≤ hi
+    | .space, c => c == ' ' || c == '\t' || c == '\n' || c == '\r'
+    | .word, c => isW c
+    | .dot, c => c != '\n'
+  word := isW
+
+open Regex in
+section
+abbrev R := Regex Atom
+def opt (r : R) : R := .alt r .eps
+def rep (r : R) : Nat → R
+  | 0 => .eps
+  | n + 1 => .cat r (rep r n)
+/-- `r` at most `n` times, nested as lean-pydantic lowers it: `(r(r…)?)?`. -/
+def upto (r : R) : Nat → R
+  | 0 => .eps
+  | n + 1 => .alt (.cat r (upto r n)) .eps
+/-- `r{lo,hi}` -/
+def counted (r : R) (lo hi : Nat) : R := .cat (rep r lo) (upto r (hi - lo))
+def a (x : Assertion) : R := .assert x
+def seqR : List R → R := List.foldr .cat .eps
+def az : R := .cls (.range 'a' 'z')
+/-- `(\<pre>[a-z]{1,30}<post>\s?){1,20}` between `start` and `finish`. -/
+def family (start finish : List R) (pre post : List R) : R :=
+  seqR (start ++ [counted (seqR (pre ++ [counted az 1 30] ++ post ++ [opt (.cls .space)])) 1 20] ++ finish)
+end
+
+open Regex.Assertion in
+def compileRows : List (String × Regex Atom) :=
+  [ ("base: ^(\\b[a-z]{1,30}\\b\\s?){1,20}$",
+      family [a start] [a finish] [a wordBoundary] [a wordBoundary]),
+    ("(?m)^(\\b[a-z]{1,30}\\b\\s?){1,20}$",
+      family [a lineStart] [a lineEnd] [a wordBoundary] [a wordBoundary]),
+    ("(?mR)^(\\b[a-z]{1,30}\\b\\s?){1,20}$",
+      family [a lineStartCRLF] [a lineEndCRLF] [a wordBoundary] [a wordBoundary]),
+    ("(?mR)^(\\b[a-z]{1,30}(?-u:\\b)\\s?){1,20}$\\b{start-half}",
+      family [a lineStartCRLF] [a lineEndCRLF, a wordStartHalf] [a wordBoundary] [a wordBoundaryAscii]),
+    ("(?mR)^(\\b{start-half}[a-z]{1,30}\\b{end-half}(?-u:\\b)\\s?){1,20}$",
+      family [a lineStartCRLF] [a lineEndCRLF] [a wordStartHalf] [a wordEndHalf, a wordBoundaryAscii]),
+    ("(?m)^\\w+\\b.*$\\b{start-half}",
+      seqR [a lineStart, .cls .word, .star (.cls .word), a wordBoundary, .star (.cls .dot), a lineEnd, a wordStartHalf]) ]
+
+/-- Time `Nfa.build` on a pattern read from a reference (so nothing is
+compiled ahead of the clock). -/
+def buildMs (r : Regex Atom) : IO (Bool × Nat) := do
+  let ref ← IO.mkRef r
+  let r ← ref.get
+  timeMs (fun () => Regex.Nfa.build r) Option.isSome
+
 def main (args : List String) : IO UInt32 := do
   let scale := (args.head? >>= String.toNat?).getD 1
   let mut bad := 0
@@ -76,5 +145,14 @@ def main (args : List String) : IO UInt32 := do
   let (ok, ms) ← timeMs (fun () => Codec.digitsValue digits) (fun v => v % 10 == 7)
   IO.println s!"{if ok && ms ≤ 1000 then "ok  " else "FAIL"} digitsValue of 1 MiB of digits: {ms} ms (bound 1000)"
   unless ok && ms ≤ 1000 do bad := bad + 1
+  -- compiling patterns with context assertions: each within 2x the base row, and under 1 s
+  let mut baseMs := 0
+  for (name, r) in compileRows do
+    let (built, ms) ← buildMs r
+    if baseMs == 0 then baseMs := max ms 1
+    let bound := min 1000 (2 * baseMs + 20)
+    let ok := built && ms ≤ bound
+    IO.println s!"{if ok then "ok  " else "FAIL"} compile {name}: {ms} ms (bound {bound}), tables built {built}"
+    unless ok do bad := bad + 1
   if bad == 0 then IO.println "bench: all within bounds"; pure 0
   else IO.println s!"bench: {bad} failing"; pure 1

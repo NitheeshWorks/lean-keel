@@ -228,11 +228,11 @@ Std (`import Keel.Regex` peaks at 0.51 GB).
   character is bounded by the pattern.
 * **Compiled once.** `Nfa.build` numbers the pattern and `PD r` and tables
   each term's linear form per context slot, checking the tables (they are
-  fields of `Nfa`); `Nfa.crun` caches steps per call. A slot packs only the
-  bits of the neighbouring characters that the pattern's assertions read
-  (`Nfa.mp`, `Nfa.mn`: one slot with no assertion but `$`, two with `^`,
-  eight with `\b`), and each term's row is computed only over the bits that
-  term reaches before its first character (`reads`, `lin_agree`). `Nfa.accepts_eq : N.accepts m t = r.accepts m t`,
+  fields of `Nfa`); `Nfa.crun` caches steps per call. A slot is a pair of
+  context classes that can occur (the end, `\n`, `\r`, word and non-word
+  characters, as far as the pattern's assertions tell them apart: one slot
+  with no assertion but `$`, six with `^`, `$`, `\b`), and each term's
+  linear form is computed once for all slots (`linS`, `atSlot_linS`). `Nfa.accepts_eq : N.accepts m t = r.accepts m t`,
   and `compile_test_iff : (r.compile m).test s = true ↔ Accepts m r s.toList`.
   `accepts_full_iff`: in `Mode.full`, `Matches r none t none`.
 * **Measured against lean-pydantic's own matcher**, which this generalises
@@ -242,8 +242,10 @@ Std (`import Keel.Regex` peaks at 0.51 GB).
   a pattern is about 10% slower (163 ms against 150 ms for
   `(\w{1,30}\s?){1,20}x`). Adding the line, ASCII-word and half-boundary
   assertions left every lean-pydantic regex bench (matching and compiling)
-  within noise, medians of seven interleaved runs, and `import Keel.Regex`
-  at 0.51 GB.
+  within noise, and `import Keel.Regex` at 0.51 GB. `lake exe bench`
+  compiles `^(\b[a-z]{1,30}\b\s?){1,20}$` in about 185 ms (740 ms before
+  the context classes), and its `(?m)`, `(?mR)`, ASCII-`\b` and
+  half-boundary variants within twice that (185-285 ms), with bounds.
 
 ## Using Keel from a lean-* repo
 

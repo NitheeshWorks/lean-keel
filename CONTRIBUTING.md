@@ -139,18 +139,23 @@ routing tests.
   are fixed (`asciiWord`, `[0-9A-Za-z_]`); the dialect's own are
   `CharClass.word`. The conformance cases check each against Rust's `regex`
   1.12, through pydantic-core.
-* **Regex: tables only as wide as the context the pattern reads.** A
-  context is five bits per side (`Side`: end, word, ASCII word, `\n`, `\r`).
-  `Nfa.build` takes the bits the terms' assertions read (`masks`), packs
-  only those into a slot (`code`, `slot`), and computes each term's row over
-  the bits it reaches before its first character (`reads`, `within`;
-  `lin_agree` and `nullB_agree` say nothing else matters), sharing it across
-  the pattern's slots (`spread`). So adding assertion kinds cost the existing
-  patterns nothing, and a pattern reading every bit pays per term only for
-  what that term reads. The per-character slot comes from 128-entry tables
-  for ASCII characters (`Nfa.pcodes`, `ncodes`, with their invariants as
-  fields), so the common case calls neither `CharClass.word` nor the bit
-  packing.
+* **Regex: one table slot per context class that can occur.** A context is
+  five bits per side (`Side`: end, word, ASCII word, `\n`, `\r`), but a side
+  can only be the end, an ASCII character's, or a non-ASCII word or non-word
+  character's (`sideCands`). `Nfa.build` projects those on the bits the
+  pattern reads (`masks`, from each term's `reads`: the assertions it can
+  reach before its first character) and keeps the distinct ones (`classes`):
+  at most six per side for a dialect whose `\n` and `\r` are not word
+  characters, whatever assertions the pattern uses. A slot is a pair of
+  classes. Each term's linear form is computed once for every slot at once
+  (`linS`: each derivative tagged with the bit set of slots where it occurs,
+  `atSlot_linS`), numbered once, and a slot's row is built once per
+  projection of the slot on the term's own masks and shared (`memoRow`).
+  The per-character slot comes from 128-entry tables for ASCII characters
+  (`Nfa.pcodes`, `ncodes`) and two numbers for non-ASCII ones, so the common
+  case calls neither `CharClass.word` nor any bit packing. The table fields
+  state their law for every context a text can give (`Nfa.hTrans`, `hNul`,
+  `hFin`).
 
 ## Deviations from starlette
 

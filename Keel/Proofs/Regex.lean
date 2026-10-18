@@ -250,14 +250,14 @@ theorem any_nul {S : List Nat} {T : List (Regex κ)} (hd : N.Den S T) (p : Optio
     split at hn
     · rename_i hlt
       obtain ⟨t, ht⟩ := N.some_of_lt hlt
-      rw [getD2, N.slot_eq, N.hNul j t ht _ _ (ctx_some_isEnd κ c)] at hn
+      rw [getD2, N.nul_eq ht p c] at hn
       exact ⟨t, (hd t).2 ⟨j, hj, ht⟩, by rw [nullable_eq]; exact hn⟩
     · cases hn
   · rintro ⟨q, hq, hn⟩
     obtain ⟨j, hj, ht⟩ := (hd q).1 hq
     refine ⟨j, hj, ?_⟩
     unfold nulAt
-    simp only [N.lt_of_some ht, ↓reduceIte]; rw [getD2, N.slot_eq, N.hNul j q ht _ _ (ctx_some_isEnd κ c)]
+    simp only [N.lt_of_some ht, ↓reduceIte]; rw [getD2, N.nul_eq ht p c]
     rw [nullable_eq] at hn; exact hn
 
 theorem any_fin {S : List Nat} {T : List (Regex κ)} (hd : N.Den S T) (p : Option Char) :
@@ -270,14 +270,14 @@ theorem any_fin {S : List Nat} {T : List (Regex κ)} (hd : N.Den S T) (p : Optio
     split at hn
     · rename_i hlt
       obtain ⟨t, ht⟩ := N.some_of_lt hlt
-      rw [getD2, N.pcode_eq, N.hFin j t ht] at hn
+      rw [getD2, N.fin_eq ht p] at hn
       exact ⟨t, (hd t).2 ⟨j, hj, ht⟩, by rw [nullable_eq, ctx_none]; exact hn⟩
     · cases hn
   · rintro ⟨q, hq, hn⟩
     obtain ⟨j, hj, ht⟩ := (hd q).1 hq
     refine ⟨j, hj, ?_⟩
     unfold finAt
-    simp only [N.lt_of_some ht, ↓reduceIte]; rw [getD2, N.pcode_eq, N.hFin j q ht]
+    simp only [N.lt_of_some ht, ↓reduceIte]; rw [getD2, N.fin_eq ht p]
     rw [nullable_eq, ctx_none] at hn; exact hn
 
 /-- One term's numbered derivatives stand for its partial derivatives. -/
@@ -285,8 +285,7 @@ theorem edges_den {j : Nat} {t : Regex κ} (ht : N.terms[j]? = some t) (p : Opti
     (∃ e ∈ (N.edges j (N.pcode p + N.ncode c)).toList, CharClass.test e.1 c = true ∧ N.terms[e.2]? = some q) ↔
       q ∈ pd p c t := by
   rw [pd_eq_lin, pick, List.mem_filterMap]
-  have hm := N.hTrans j t ht (ctx κ p) (ctx κ (some c)) (ctx_some_isEnd κ c)
-  rw [← N.slot_eq] at hm
+  have hm := N.trans_eq ht p c
   constructor
   · rintro ⟨e, he, hc, hq⟩
     have : (e.1, some q) ∈ (lin (ctx κ p) (ctx κ (some c)) t).map (fun kq => (kq.1, some kq.2)) := by

@@ -10,9 +10,9 @@ work once per pattern: it numbers the pattern and its partial derivatives
 slot stores its linear form (`lin`: each derivative with the class that
 guards it) with the derivatives as numbers, and its nullability. A context
 is what the assertions read of the characters on either side (`Side`); a
-slot packs only the bits the pattern's assertions read, and a term's row is
-computed only over the bits it reaches before its first character
-(`reads`, `lin_agree`), then shared across the slots that agree on them. Matching
+slot is a pair of the context classes that can occur, as far as the
+pattern's assertions tell them apart (`classes`), and each term's linear
+form is computed once for every slot (`linS`). Matching
 (`Nfa.run`) keeps a set of term numbers: per character, one class test per
 live edge and an array of seen flags; no term is built, hashed or compared.
 Within one call, the sets met are numbered and each step is cached
@@ -323,86 +323,272 @@ theorem mem_dedupIds (n : Nat) (l : List Nat) (x : Nat) : x ∈ dedupIds n l ↔
 
 /-! ## The compiled matcher
 
-The tables of a pattern have a row per context its terms can tell apart: the
-masks `mp` and `mn` (`reads`) say which bits of the character before and of
-the one after any assertion of the pattern reads, and a context's slot packs
-just those bits (`code`). A pattern with `^` alone has two slots, one with
-word boundaries eight, one with no assertion but `$` one. -/
+The tables of a pattern have a row per context its terms can tell apart. A
+context is a pair of sides; what the pattern reads of a side is its
+projection on the pattern's masks (`masks`, from `reads`), and the sides a
+position can have are few (`sideCands`: an end of the text, each ASCII
+character's, a non-ASCII word or non-word character's). So a side's class
+is one of the distinct projections (`classes`), at most six for a dialect
+whose `\n` and `\r` are not word characters, whatever assertions the
+pattern uses, and a slot is a pair of classes. -/
 
-/-- Append a bit to a code, if the mask reads it. -/
-@[inline] def pushBit (sel v : Bool) (acc : Nat) : Nat := if sel then 2 * acc + v.toNat else acc
+/-- A non-ASCII word character's side. -/
+def Side.wordChar : Side := ⟨false, true, false, false, false⟩
 
-/-- Take the last bit off a code, if the mask read it. -/
-@[inline] def popBit (sel : Bool) (k : Nat) : Bool × Nat := if sel then (k % 2 == 1, k / 2) else (false, k)
+/-- A non-ASCII non-word character's side. -/
+def Side.otherChar : Side := ⟨false, false, false, false, false⟩
 
-theorem popBit_pushBit (sel v : Bool) (acc : Nat) : popBit sel (pushBit sel v acc) = (sel && v, acc) := by
-  cases sel <;> cases v <;> simp [popBit, pushBit] <;> omega
+/-- The sides a position can have. -/
+def sideCands (κ : Type) [CharClass κ] : List Side :=
+  .atEnd :: .wordChar :: .otherChar :: (List.range 128).map fun k => ctx κ (some (Char.ofNat k))
 
-/-- The number of codes, for each bit the mask reads a doubling. -/
-@[inline] def widen (sel : Bool) (b : Nat) : Nat := if sel then 2 * b else b
+theorem asciiWord_of_ge {c : Char} (h : 128 ≤ c.toNat) : asciiWord c = false := by
+  have hv : 128 ≤ c.val.toNat := h
+  simp [asciiWord, Char.isAlphanum, Char.isAlpha, Char.isUpper, Char.isLower, Char.isDigit]
+  refine ⟨⟨⟨fun _ => ?_, fun _ => ?_⟩, fun _ => ?_⟩, ?_⟩
+  all_goals first
+    | (rw [UInt32.lt_iff_toNat_lt]; simp; omega)
+    | (rintro rfl; simp at h)
 
-theorem pushBit_lt {sel v : Bool} {acc b : Nat} (h : acc < b) : pushBit sel v acc < widen sel b := by
-  cases sel <;> cases v <;> simp [pushBit, widen] <;> omega
+/-- A non-ASCII character's side: its word bit, and nothing else. -/
+theorem ctx_of_ge (κ : Type) [CharClass κ] {c : Char} (h : 128 ≤ c.toNat) :
+    ctx κ (some c) = if CharClass.word κ c then .wordChar else .otherChar := by
+  have hl : (some c == some '\n') = false := by simp; rintro rfl; simp at h
+  have hr : (some c == some '\r') = false := by simp; rintro rfl; simp at h
+  simp only [ctx, Option.isNone_some, wordAt, asciiWord_of_ge h, hl, hr]
+  split <;> simp_all [Side.wordChar, Side.otherChar]
 
-/-- A side's slot: the bits of `s` that the mask `m` reads. -/
-@[inline] def code (m s : Side) : Nat :=
-  pushBit m.cr s.cr (pushBit m.lf s.lf (pushBit m.asciiWord s.asciiWord (pushBit m.word s.word
-    (pushBit m.isEnd s.isEnd 0))))
+theorem ctx_mem_sideCands (κ : Type) [CharClass κ] (p : Option Char) : ctx κ p ∈ sideCands κ := by
+  match p with
+  | none => exact List.mem_cons_self
+  | some c =>
+    by_cases h : c.toNat < 128
+    · refine List.mem_cons_of_mem _ (List.mem_cons_of_mem _ (List.mem_cons_of_mem _ ?_))
+      exact List.mem_map.2 ⟨c.toNat, List.mem_range.2 h, by rw [Char.ofNat_toNat]⟩
+    · rw [ctx_of_ge κ (by omega)]
+      split
+      · exact List.mem_cons_of_mem _ List.mem_cons_self
+      · exact List.mem_cons_of_mem _ (List.mem_cons_of_mem _ List.mem_cons_self)
 
-/-- The slot's side, with the bits the mask does not read cleared. -/
-def decode (m : Side) (k : Nat) : Side :=
-  let cr := popBit m.cr k
-  let lf := popBit m.lf cr.2
-  let aw := popBit m.asciiWord lf.2
-  let w := popBit m.word aw.2
-  ⟨(popBit m.isEnd w.2).1, w.1, aw.1, lf.1, cr.1⟩
+/-- The classes of the sides under a mask: their distinct projections. -/
+def classes (m : Side) (l : List Side) : List Side := (l.map m.proj).eraseDups
 
-theorem decode_code (m s : Side) : decode m (code m s) = m.proj s := by
-  simp only [decode, code, popBit_pushBit, Side.proj]
+theorem proj_mem_classes {m s : Side} {l : List Side} (h : s ∈ l) : m.proj s ∈ classes m l :=
+  List.mem_eraseDups.2 (List.mem_map.2 ⟨s, h, rfl⟩)
 
-/-- The number of slots of a mask. -/
-@[inline] def Side.size (m : Side) : Nat := widen m.cr (widen m.lf (widen m.asciiWord (widen m.word (widen m.isEnd 1))))
+/-- A side's class number. -/
+def code (cls : List Side) (s : Side) : Nat := cls.idxOf s
 
-theorem code_lt (m s : Side) : code m s < m.size :=
-  pushBit_lt (pushBit_lt (pushBit_lt (pushBit_lt (pushBit_lt Nat.zero_lt_one))))
+/-- The side of a class number. -/
+def decode (cls : List Side) (k : Nat) : Side := cls.getD k .nothing
 
-theorem Side.size_pos (m : Side) : 0 < m.size := Nat.lt_of_le_of_lt (Nat.zero_le _) (code_lt m m)
+theorem decode_classes_isEnd {m : Side} (hm : m.isEnd = false) {l : List Side} (k : Nat) :
+    (decode (classes m l) k).isEnd = false := by
+  unfold decode
+  rw [List.getD_eq_getElem?_getD]
+  cases h : (classes m l)[k]? with
+  | none => rfl
+  | some x =>
+    obtain ⟨s, -, rfl⟩ := List.mem_map.1 (List.mem_eraseDups.1 (List.mem_of_getElem? h))
+    simp [Side.proj, hm]
 
-/-- The slot of a context, before (`mp`) and after (`mn`) a position. -/
-@[inline] def slot (mp mn pc nc : Side) : Nat := code mp pc + mp.size * code mn nc
+theorem code_lt {cls : List Side} {s : Side} (h : s ∈ cls) : code cls s < cls.length :=
+  List.idxOf_lt_length_iff.2 h
 
-/-- The slot's context. -/
-def unslot (mp mn : Side) (k : Nat) : Side × Side := (decode mp (k % mp.size), decode mn (k / mp.size))
+theorem decode_code {cls : List Side} {s : Side} (h : s ∈ cls) : decode cls (code cls s) = s := by
+  have hl := List.idxOf_lt_length_iff.2 h
+  simp only [decode, code, List.getD_eq_getElem?_getD]
+  rw [List.getElem?_eq_getElem hl, Option.getD_some, List.getElem_idxOf]
 
-theorem unslot_slot (mp mn pc nc : Side) : unslot mp mn (slot mp mn pc nc) = (mp.proj pc, mn.proj nc) := by
-  have h := code_lt mp pc
-  have hs := Side.size_pos mp
-  simp only [unslot, slot, Nat.add_mul_mod_self_left, Nat.mod_eq_of_lt h, Nat.add_mul_div_left _ _ hs,
-    Nat.div_eq_of_lt h, Nat.zero_add, decode_code]
+/-- A character's slot part: from a table for ASCII characters, else the
+part of a non-ASCII word or non-word character (or of the end). -/
+@[inline] def codeOf (κ : Type) [CharClass κ] (tab : Array Nat) (w o e : Nat) : Option Char → Nat
+  | some c => if h : c.toNat < tab.size then tab[c.toNat] else if CharClass.word κ c then w else o
+  | none => e
 
-theorem slot_lt (mp mn pc nc : Side) : slot mp mn pc nc < mp.size * mn.size := by
-  have h₁ := code_lt mp pc
-  have h₂ := code_lt mn nc
-  unfold slot
-  calc code mp pc + mp.size * code mn nc < mp.size + mp.size * code mn nc := by omega
-    _ = mp.size * (code mn nc + 1) := by rw [Nat.mul_add, Nat.mul_one, Nat.add_comm]
-    _ ≤ mp.size * mn.size := Nat.mul_le_mul_left _ h₂
+/-- The table of a side function on the ASCII characters. -/
+def table (κ : Type) [CharClass κ] (f : Side → Nat) : Array Nat :=
+  (Array.range 128).map fun k => f (ctx κ (some (Char.ofNat k)))
 
-omit [CharClass κ] in
-/-- A projected context reads as the context itself, for a term within the
-masks, when a character is read. -/
-theorem lin_unslot {mp mn pc nc : Side} (hn : nc.isEnd = false) {t : Regex κ} (h : within mp mn t = true) :
-    lin (unslot mp mn (slot mp mn pc nc)).1 (unslot mp mn (slot mp mn pc nc)).2 t = lin pc nc t := by
-  rw [unslot_slot]
-  obtain ⟨_, _, _, _, _⟩ := mn
-  exact lin_agree (Side.proj_proj _ _) (Side.proj_proj _ _) (by simp [Side.proj, hn]) t h
+theorem codeOf_table (κ : Type) [CharClass κ] (f : Side → Nat) (p : Option Char) :
+    codeOf κ (table κ f) (f .wordChar) (f .otherChar) (f .atEnd) p = f (ctx κ p) := by
+  match p with
+  | none => rfl
+  | some c =>
+    simp only [codeOf, table, Array.size_map, Array.size_range, Array.getElem_map, Array.getElem_range]
+    split
+    · rw [Char.ofNat_toNat]
+    · rw [ctx_of_ge κ (by omega)]; split <;> rfl
+
+/-! ### Slot sets and the linear form over every slot at once -/
+
+/-- The slots below `K` where `f` holds, as a bit set. -/
+def bitsBelow (f : Nat → Bool) : Nat → Nat
+  | 0 => 0
+  | K + 1 => bitsBelow f K ||| (if f K then 1 <<< K else 0)
+
+theorem testBit_bitsBelow (f : Nat → Bool) (k : Nat) : ∀ K, (bitsBelow f K).testBit k = (decide (k < K) && f k)
+  | 0 => by simp [bitsBelow]
+  | K + 1 => by
+    simp only [bitsBelow, Nat.testBit_or, testBit_bitsBelow f k K]
+    by_cases hk : k < K
+    · have : K ≠ k := by omega
+      split <;> simp [hk, Nat.shiftLeft_eq, this, show k < K + 1 by omega]
+    · by_cases he : k = K
+      · subst he; split <;> simp_all [Nat.shiftLeft_eq]
+      · have : K ≠ k := Ne.symm he
+        split <;> simp [hk, Nat.shiftLeft_eq, this, show ¬ k < K + 1 by omega]
+
+/-- The context slots of a table: `K` of them with their contexts `cx`;
+every slot as a bit set (`all`), and the slots where each assertion holds
+(`aset`), computed once per pattern. -/
+structure Slots where
+  cx : Nat → Side × Side
+  K : Nat
+  all : Nat
+  aset : Assertion → Nat
+  hall : ∀ k, all.testBit k = decide (k < K)
+  haset : ∀ a k, (aset a).testBit k = (decide (k < K) && a.holdsB (cx k).1 (cx k).2)
+
+/-- Every assertion, in constructor order. -/
+def allAssertions : Array Assertion :=
+  #[.start, .finish, .wordBoundary, .notWordBoundary, .wordStart, .wordEnd, .lineStart, .lineEnd,
+    .lineStartCRLF, .lineEndCRLF, .wordBoundaryAscii, .notWordBoundaryAscii, .wordStartAscii,
+    .wordEndAscii, .wordStartHalf, .wordEndHalf, .wordStartHalfAscii, .wordEndHalfAscii]
+
+theorem allAssertions_get (a : Assertion) : allAssertions[a.ctorIdx]? = some a := by
+  cases a <;> rfl
+
+/-- The slots of `K` contexts, with each assertion's set computed once. -/
+def Slots.of (cx : Nat → Side × Side) (K : Nat) : Slots :=
+  let sets := allAssertions.map fun a => bitsBelow (fun k => a.holdsB (cx k).1 (cx k).2) K
+  { cx, K, all := bitsBelow (fun _ => true) K, aset := fun a => sets.getD a.ctorIdx 0
+    hall := fun k => by simp [testBit_bitsBelow]
+    haset := fun a k => by
+      simp only [sets, Array.getD_eq_getD_getElem?, Array.getElem?_map, allAssertions_get, Option.map_some,
+        Option.getD_some, testBit_bitsBelow] }
+
+/-- The slots where `r` is nullable. -/
+def nullSet (S : Slots) : Regex κ → Nat
+  | empty | cls _ => 0
+  | eps | star _ => S.all
+  | assert a => S.aset a
+  | alt r s => nullSet S r ||| nullSet S s
+  | cat r s => nullSet S r &&& nullSet S s
 
 omit [CharClass κ] [DecidableEq κ] in
-theorem nullB_unslot {mp mn pc nc : Side} (hn : nc.isEnd = false) {t : Regex κ} (h : within mp mn t = true) :
-    nullB (unslot mp mn (slot mp mn pc nc)).1 (unslot mp mn (slot mp mn pc nc)).2 t = nullB pc nc t := by
-  rw [unslot_slot]
-  obtain ⟨_, _, _, _, _⟩ := mn
-  exact nullB_agree (Side.proj_proj _ _) (Side.proj_proj _ _) (by simp [Side.proj, hn]) t h
+theorem testBit_nullSet (S : Slots) {k : Nat} (hk : k < S.K) :
+    ∀ r : Regex κ, (nullSet S r).testBit k = nullB (S.cx k).1 (S.cx k).2 r
+  | empty | cls _ => by simp [nullSet, nullB]
+  | eps | star _ => by simp [nullSet, nullB, S.hall, hk]
+  | assert a => by simp [nullSet, nullB, S.haset, hk]
+  | alt r s => by simp [nullSet, nullB, Nat.testBit_or, testBit_nullSet S hk r, testBit_nullSet S hk s]
+  | cat r s => by simp [nullSet, nullB, Nat.testBit_and, testBit_nullSet S hk r, testBit_nullSet S hk s]
+
+/-- The linear form in every slot at once: each derivative with its class
+and the set of slots (within `g`) where the linear form has it. -/
+@[specialize]
+def linS (S : Slots) (g : Nat) : Regex κ → List (κ × Regex κ × Nat)
+  | cls k => [(k, eps, g)]
+  | alt r s => linS S g r ++ linS S g s
+  | cat r s =>
+    (linS S g r).map (fun e => (e.1, seq e.2.1 s, e.2.2)) ++
+      (let g' := g &&& nullSet S r
+       if g' = 0 then [] else linS S g' s)
+  | star r => (linS S g r).map (fun e => (e.1, seq e.2.1 (star r), e.2.2))
+  | _ => []
+
+/-- The entries of a slot-tagged list in slot `k`. -/
+def atSlot {β : Type} (k : Nat) (l : List (κ × β × Nat)) : List (κ × β) :=
+  l.filterMap fun e => if e.2.2.testBit k then some (e.1, e.2.1) else none
+
+omit [CharClass κ] [DecidableEq κ] in
+theorem atSlot_map {β γ : Type} (k : Nat) (f : β → γ) (l : List (κ × β × Nat)) :
+    atSlot k (l.map fun e => (e.1, f e.2.1, e.2.2)) = (atSlot k l).map fun kq => (kq.1, f kq.2) := by
+  induction l with
+  | nil => rfl
+  | cons e l ih =>
+    simp only [atSlot] at ih ⊢
+    simp only [List.map_cons, List.filterMap_cons]
+    by_cases hb : e.2.2.testBit k <;> simp [hb, ih]
+
+omit [CharClass κ] [DecidableEq κ] in
+theorem atSlot_append {β : Type} (k : Nat) (l l' : List (κ × β × Nat)) :
+    atSlot k (l ++ l') = atSlot k l ++ atSlot k l' := List.filterMap_append
+
+omit [CharClass κ] in
+/-- **The tagged linear form is the linear form in each slot.** -/
+theorem atSlot_linS (S : Slots) {k : Nat} (hk : k < S.K) : ∀ (g : Nat) (r : Regex κ),
+      atSlot k (linS S g r) = if g.testBit k then lin (S.cx k).1 (S.cx k).2 r else []
+  | g, empty | g, eps | g, assert _ => by simp [linS, atSlot, lin]
+  | g, cls c => by by_cases hb : g.testBit k <;> simp [linS, atSlot, lin, hb]
+  | g, alt r s => by
+    rw [linS, lin, atSlot_append, atSlot_linS S hk g r, atSlot_linS S hk g s]
+    split <;> simp
+  | g, cat r s => by
+    have hb : (g &&& nullSet S r).testBit k = (g.testBit k && nullB (S.cx k).1 (S.cx k).2 r) := by
+      rw [Nat.testBit_and, testBit_nullSet S hk r]
+    have hm := atSlot_map k (fun q => seq q s) (linS S g r)
+    rw [linS, lin, atSlot_append, hm, atSlot_linS S hk g r]
+    simp only
+    by_cases h0 : (g &&& nullSet S r) = 0
+    · simp only [h0, ↓reduceIte]
+      rw [h0, Nat.zero_testBit] at hb
+      cases hg : g.testBit k <;> cases hn : nullB (S.cx k).1 (S.cx k).2 r <;> simp_all [atSlot]
+    · simp only [h0, ↓reduceIte]
+      rw [atSlot_linS S hk _ s, hb]
+      cases g.testBit k <;> cases nullB (S.cx k).1 (S.cx k).2 r <;> simp
+  | g, star r => by
+    have hm := atSlot_map k (fun q => seq q (star r)) (linS S g r)
+    rw [linS, lin, hm, atSlot_linS S hk g r]
+    split <;> simp
+
+/-- `f` on each `k < K`, computed once per value of `key`. -/
+def memoRow {α β : Type} [DecidableEq α] (key : Nat → α) (f : Nat → β) (K : Nat) : Array β :=
+  ((List.range K).foldl (fun (acc : Array β × List (α × β)) k =>
+    match acc.2.find? (fun e => decide (e.1 = key k)) with
+    | some e => (acc.1.push e.2, acc.2)
+    | none => let b := f k; (acc.1.push b, (key k, b) :: acc.2)) (#[], [])).1
+
+theorem memoRow_get {α β : Type} [DecidableEq α] (key : Nat → α) (f : Nat → β) (K : Nat)
+    (hf : ∀ k k', k < K → k' < K → key k = key k' → f k = f k') {k : Nat} (hk : k < K) :
+    (memoRow key f K)[k]? = some (f k) := by
+  -- the fold keeps: the row is `f` on the slots so far, and each memo entry is `f` at a slot so far
+  let Inv (n : Nat) (acc : Array β × List (α × β)) : Prop :=
+    acc.1.size = n ∧ (∀ i (h : i < acc.1.size), acc.1[i] = f i) ∧ ∀ e ∈ acc.2, ∃ i < n, key i = e.1 ∧ e.2 = f i
+  have step : ∀ n, n ≤ K → ∀ acc, Inv 0 acc → Inv n ((List.range n).foldl (fun (acc : Array β × List (α × β)) k =>
+      match acc.2.find? (fun e => decide (e.1 = key k)) with
+      | some e => (acc.1.push e.2, acc.2)
+      | none => let b := f k; (acc.1.push b, (key k, b) :: acc.2)) acc) := by
+    intro n
+    induction n with
+    | zero => intro _ acc h; exact h
+    | succ n ih =>
+      intro hn acc h0
+      rw [List.range_succ, List.foldl_append, List.foldl_cons, List.foldl_nil]
+      obtain ⟨hs, hv, hm⟩ := ih (by omega) acc h0
+      generalize List.foldl _ acc (List.range n) = acc' at hs hv hm
+      split
+      · rename_i e he
+        obtain ⟨i, hi, hki, hei⟩ := hm e (List.mem_of_find?_eq_some he)
+        have hke : e.1 = key n := by simpa using List.find?_some he
+        refine ⟨by simp [hs], fun j hj => ?_, fun e' he' => ?_⟩
+        · rw [Array.getElem_push]; split
+          · exact hv j _
+          · have : j = n := by simp at hj; omega
+            subst this; rw [hei]; exact hf i j (by omega) (by omega) (hki.trans hke)
+        · obtain ⟨i', hi', h'⟩ := hm e' he'; exact ⟨i', by omega, h'⟩
+      · refine ⟨by simp [hs], fun j hj => ?_, fun e' he' => ?_⟩
+        · rw [Array.getElem_push]; split
+          · exact hv j _
+          · have : j = n := by simp at hj; omega
+            subst this; rfl
+        · rcases List.mem_cons.1 he' with rfl | he'
+          · exact ⟨n, by omega, rfl, rfl⟩
+          · obtain ⟨i', hi', h'⟩ := hm e' he'; exact ⟨i', by omega, h'⟩
+  obtain ⟨hs, hv, -⟩ := step K (Nat.le_refl K) (#[], []) ⟨rfl, fun i h => by simp at h, fun e he => by simp at he⟩
+  unfold memoRow
+  rw [Array.getElem?_eq_getElem (by omega), hv]
 
 theorem Side.proj_proj_of_le {a m : Side} (h : a.le m = true) (s : Side) : a.proj (m.proj s) = a.proj s := by
   obtain ⟨_, _, _, _, _⟩ := a; obtain ⟨_, _, _, _, _⟩ := m
@@ -425,33 +611,36 @@ theorem nullB_proj {tp tn mp mn : Side} {t : Regex κ} (hw : within tp tn t = tr
   nullB_agree (Side.proj_proj_of_le hp pc) (Side.proj_proj_of_le hn nc) (by simp [Side.proj, he]) t hw
 
 /-- The pattern compiled once: its derivative terms numbered (`terms[0]` is
-the pattern), the masks of the bits its assertions read, and for each term
-and context slot, its linear form with the derivatives as numbers, and
-whether it is nullable before a character and at the end. The fields after
-the tables say they are right. -/
+the pattern); for each term and context slot, its linear form with the
+derivatives as numbers, and whether it is nullable before a character and
+at the end; and the tables that give a character's slot part. The fields
+after the tables say they are right, for every context a text can give. -/
 structure Nfa (r : Regex κ) where
   terms : Array (Regex κ)
-  /-- The bits of the character before that the terms read. -/
-  mp : Side
-  /-- The bits of the character after that the terms read. -/
-  mn : Side
   trans : Array (Array (Array (κ × Nat)))
   nul : Array (Array Bool)
   fin : Array (Array Bool)
-  start : terms[0]? = some r
-  hTrans : ∀ (j : Nat) (t : Regex κ), terms[j]? = some t → ∀ (pc nc : Side), nc.isEnd = false →
-    ((trans[j]?.bind (·[slot mp mn pc nc]?)).getD #[]).toList.map (fun e => (e.1, terms[e.2]?)) =
-      (lin pc nc t).map (fun kq => (kq.1, some kq.2))
-  hNul : ∀ (j : Nat) (t : Regex κ), terms[j]? = some t → ∀ (pc nc : Side), nc.isEnd = false →
-    (nul[j]?.bind (·[slot mp mn pc nc]?)).getD false = nullB pc nc t
-  hFin : ∀ (j : Nat) (t : Regex κ), terms[j]? = some t → ∀ (pc : Side),
-    (fin[j]?.bind (·[code mp pc]?)).getD false = nullB pc .atEnd t
   /-- The slot part of each ASCII character as the character before. -/
   pcodes : Array Nat
+  /-- The slot parts of a non-ASCII word and non-word character before, and of the start. -/
+  pW : Nat
+  pN : Nat
+  pE : Nat
   /-- The slot part of each ASCII character as the character read. -/
   ncodes : Array Nat
-  hP : ∀ (k v : Nat), pcodes[k]? = some v → v = code mp (ctx κ (some (Char.ofNat k)))
-  hN : ∀ (k v : Nat), ncodes[k]? = some v → v = mp.size * code mn (ctx κ (some (Char.ofNat k)))
+  /-- The slot parts of a non-ASCII word and non-word character read. -/
+  nW : Nat
+  nN : Nat
+  start : terms[0]? = some r
+  hTrans : ∀ (j : Nat) (t : Regex κ), terms[j]? = some t → ∀ (p : Option Char) (c : Char),
+    ((trans[j]?.bind (·[codeOf κ pcodes pW pN pE p + codeOf κ ncodes nW nN 0 (some c)]?)).getD #[]).toList.map
+        (fun e => (e.1, terms[e.2]?)) =
+      (lin (ctx κ p) (ctx κ (some c)) t).map (fun kq => (kq.1, some kq.2))
+  hNul : ∀ (j : Nat) (t : Regex κ), terms[j]? = some t → ∀ (p : Option Char) (c : Char),
+    (nul[j]?.bind (·[codeOf κ pcodes pW pN pE p + codeOf κ ncodes nW nN 0 (some c)]?)).getD false =
+      nullB (ctx κ p) (ctx κ (some c)) t
+  hFin : ∀ (j : Nat) (t : Regex κ), terms[j]? = some t → ∀ (p : Option Char),
+    (fin[j]?.bind (·[codeOf κ pcodes pW pN pE p]?)).getD false = nullB (ctx κ p) .atEnd t
 
 namespace Nfa
 
@@ -461,40 +650,22 @@ variable {r : Regex κ} (N : Nfa r) (m : Mode)
 read: the pattern's, unless the start is anchored. -/
 def restart : List Nat := if m.anchorStart then [] else [0]
 
-/-- The slot part of the character before: from the table for an ASCII
-character. -/
-@[inline] def pcode (p : Option Char) : Nat :=
-  match p with
-  | some c =>
-    match N.pcodes[c.toNat]? with
-    | some v => v
-    | none => code N.mp (ctx κ (some c))
-  | none => code N.mp (ctx κ none)
+/-- The slot part of the character before. -/
+@[inline] def pcode (p : Option Char) : Nat := codeOf κ N.pcodes N.pW N.pN N.pE p
 
-/-- The slot part of the character read: from the table for an ASCII
-character. -/
-@[inline] def ncode (c : Char) : Nat :=
-  match N.ncodes[c.toNat]? with
-  | some v => v
-  | none => N.mp.size * code N.mn (ctx κ (some c))
+/-- The slot part of the character read. -/
+@[inline] def ncode (c : Char) : Nat := codeOf κ N.ncodes N.nW N.nN 0 (some c)
 
-theorem pcode_eq (p : Option Char) : N.pcode p = code N.mp (ctx κ p) := by
-  unfold pcode
-  split
-  · rename_i c
-    split
-    · rename_i v h; rw [N.hP _ _ h, Char.ofNat_toNat]
-    · rfl
-  · rfl
+theorem trans_eq {j : Nat} {t : Regex κ} (ht : N.terms[j]? = some t) (p : Option Char) (c : Char) :
+    ((N.trans[j]?.bind (·[N.pcode p + N.ncode c]?)).getD #[]).toList.map (fun e => (e.1, N.terms[e.2]?)) =
+      (lin (ctx κ p) (ctx κ (some c)) t).map (fun kq => (kq.1, some kq.2)) := N.hTrans j t ht p c
 
-theorem ncode_eq (c : Char) : N.ncode c = N.mp.size * code N.mn (ctx κ (some c)) := by
-  unfold ncode
-  split
-  · rename_i v h; rw [N.hN _ _ h, Char.ofNat_toNat]
-  · rfl
+theorem nul_eq {j : Nat} {t : Regex κ} (ht : N.terms[j]? = some t) (p : Option Char) (c : Char) :
+    (N.nul[j]?.bind (·[N.pcode p + N.ncode c]?)).getD false = nullB (ctx κ p) (ctx κ (some c)) t :=
+  N.hNul j t ht p c
 
-theorem slot_eq (p : Option Char) (c : Char) : N.pcode p + N.ncode c = slot N.mp N.mn (ctx κ p) (ctx κ (some c)) := by
-  rw [pcode_eq, ncode_eq]; rfl
+theorem fin_eq {j : Nat} {t : Regex κ} (ht : N.terms[j]? = some t) (p : Option Char) :
+    (N.fin[j]?.bind (·[N.pcode p]?)).getD false = nullB (ctx κ p) .atEnd t := N.hFin j t ht p
 
 /-- The numbered derivatives of term `j`, with their classes, in slot `k`. -/
 @[inline] def edges (j k : Nat) : Array (κ × Nat) :=
@@ -905,11 +1076,16 @@ end Nfa
 
 variable [Hashable κ]
 
-/-- Every context slot of the masks. -/
-def combos (mp mn : Side) : List (Side × Side) := (List.range (mp.size * mn.size)).map (unslot mp mn)
+/-- The context slots of the classes: before (`pcls`) and after (`ncls`). -/
+def combos (pcls ncls : List Side) : List (Side × Side) :=
+  (List.range (pcls.length * ncls.length)).map fun k => (decode pcls (k % pcls.length), decode ncls (k / pcls.length))
 
-theorem mem_combos (mp mn pc nc : Side) : unslot mp mn (slot mp mn pc nc) ∈ combos mp mn :=
-  List.mem_map.2 ⟨_, List.mem_range.2 (slot_lt mp mn pc nc), rfl⟩
+/-- The number of context slots of the classes. -/
+def slots (pcls ncls : List Side) : Nat := pcls.length * ncls.length
+
+theorem mem_combos {pcls ncls : List Side} {k : Nat} (hk : k < slots pcls ncls) :
+    (decode pcls (k % pcls.length), decode ncls (k / pcls.length)) ∈ combos pcls ncls :=
+  List.mem_map.2 ⟨k, List.mem_range.2 hk, rfl⟩
 
 /-- Number `q`, adding it if it is new. -/
 @[specialize]
@@ -931,11 +1107,6 @@ theorem lin_ctxFree (pc nc : Side) (hn : nc.isEnd = false) (r : Regex κ) (h : c
     lin pc nc r = lin .nothing .nothing r :=
   lin_agree (mp := .nothing) (mn := .nothing) (pc := pc) (pc' := .nothing) (nc := nc) (nc' := .nothing) rfl rfl hn r h
 
-/-- The slots whose linear forms can differ: those of the term's own masks,
-one when the context never matters. -/
-@[specialize]
-def slots (t : Regex κ) : List (Side × Side) := combos (reads t).1 (reads t).2
-
 /-- The pattern and its partial derivatives `PD r` (at most one per character
 class), numbered, the pattern first. Every derivative of a numbered term is
 numbered, since `PD` is closed under derivation (`PD_closed`); `build` checks
@@ -954,29 +1125,20 @@ def masks (terms : Array (Regex κ)) : Side × Side :=
 def numbered (idx : Std.HashMap (Regex κ) Nat) (l : List (κ × Regex κ)) : Array (κ × Nat) :=
   (l.map fun kq => (kq.1, idx.getD kq.2 0)).toArray
 
-/-- Spread a term's row over its own slots (`local`, masks `tp`, `tn`) to
-the pattern's slots (masks `mp`, `mn`): each pattern slot shares the entry of
-the term slot it projects to. -/
-@[inline] def spread {β : Type} (mp mn tp tn : Side) (d : β) (row : Array β) : Array β :=
-  (Array.range (mp.size * mn.size)).map fun k => row.getD (slot tp tn (unslot mp mn k).1 (unslot mp mn k).2) d
-
-theorem spread_get {β : Type} (mp mn tp tn : Side) (d : β) (row : Array β) (pc nc : Side) :
-    (spread mp mn tp tn d row)[slot mp mn pc nc]? = some (row.getD (slot tp tn (mp.proj pc) (mn.proj nc)) d) := by
-  simp [spread, slot_lt, unslot_slot]
-
 /-- A term's table row: its linear form in each slot, with the derivatives
-as numbers, computed once per slot of the term's own masks (once in all
-when the context never matters). -/
+as numbers. The tagged linear form `ls` is computed and numbered once; a
+slot's entry is those tagged with it, built once per projection of the slot
+on the term's own masks and shared. -/
 @[specialize]
-def transRow (mp mn : Side) (idx : Std.HashMap (Regex κ) Nat) (t : Regex κ) : Array (Array (κ × Nat)) :=
-  if ctxFree t then
-    let e := numbered idx (lin .nothing .nothing t)
-    (Array.range (mp.size * mn.size)).map fun _ => e
-  else
-    let tp := (reads t).1
-    let tn := (reads t).2
-    spread mp mn tp tn #[] ((Array.range (tp.size * tn.size)).map fun k =>
-      numbered idx (lin (unslot tp tn k).1 (unslot tp tn k).2 t))
+def transRowOf (S : Slots) (idx : Std.HashMap (Regex κ) Nat) (t : Regex κ)
+    (ls : List (κ × Regex κ × Nat)) : Array (Array (κ × Nat)) :=
+  let es := ls.map fun e => (e.1, idx.getD e.2.1 0, e.2.2)
+  memoRow (fun k => ((reads t).1.proj (S.cx k).1, (reads t).2.proj (S.cx k).2)) (fun k => (atSlot k es).toArray) S.K
+
+/-- `transRowOf` on the term's tagged linear form. -/
+@[specialize]
+def transRow (S : Slots) (idx : Std.HashMap (Regex κ) Nat) (t : Regex κ) : Array (Array (κ × Nat)) :=
+  transRowOf S idx t (linS S S.all t)
 
 /-- What `build` checks of each term's masks: they say what the term reads,
 and the pattern's masks cover them. -/
@@ -989,139 +1151,181 @@ theorem masksOk_spec {mp mn : Side} {t : Regex κ} (h : masksOk mp mn t = true) 
   simpa [masksOk, Bool.and_eq_true, and_assoc] using h
 
 omit [CharClass κ] in
-theorem transRow_get {mp mn : Side} (idx : Std.HashMap (Regex κ) Nat) {t : Regex κ} (ht : masksOk mp mn t = true)
-    (pc nc : Side) (hn : nc.isEnd = false) :
-    (transRow mp mn idx t)[slot mp mn pc nc]? = some (numbered idx (lin pc nc t)) := by
-  obtain ⟨hw, hp, hq⟩ := masksOk_spec ht
-  unfold transRow
-  split
-  · rename_i hf; simp [slot_lt, lin_ctxFree pc nc hn t hf]
-  · have hn' : (mn.proj nc).isEnd = false := by simp [Side.proj, hn]
-    rw [spread_get, Array.getD_eq_getD_getElem?]
-    simp [slot_lt, lin_unslot hn' hw, lin_proj hw hp hq pc nc hn]
+theorem transRow_get (S : Slots) (idx : Std.HashMap (Regex κ) Nat) {t : Regex κ}
+    (hw : within (reads t).1 (reads t).2 t = true) (hend : ∀ k, (S.cx k).2.isEnd = false) {k : Nat} (hk : k < S.K) :
+    (transRow S idx t)[k]? = some (numbered idx (lin (S.cx k).1 (S.cx k).2 t)) := by
+  have hm := fun k => atSlot_map k (fun q => idx.getD q 0) (linS S S.all t)
+  unfold transRow transRowOf
+  rw [memoRow_get _ _ _ ?_ hk]
+  · rw [hm, atSlot_linS S hk]
+    simp [S.hall k, hk, numbered]
+  · intro k₁ k₂ h₁ h₂ he
+    simp only [Prod.mk.injEq] at he
+    rw [hm, hm, atSlot_linS S h₁, atSlot_linS S h₂, lin_agree he.1 he.2 (by rw [hend, hend]) t hw]
+    simp [S.hall, h₁, h₂]
 
 /-- A term's nullability before a character, in each slot. -/
 @[specialize]
-def nulRow (mp mn : Side) (t : Regex κ) : Array Bool :=
+def nulRow (S : Slots) (t : Regex κ) : Array Bool :=
   if ctxFree t then
     let b := nullB .nothing .nothing t
-    (Array.range (mp.size * mn.size)).map fun _ => b
+    (Array.range S.K).map fun _ => b
   else
-    let tp := (reads t).1
-    let tn := (reads t).2
-    spread mp mn tp tn false ((Array.range (tp.size * tn.size)).map fun k => nullB (unslot tp tn k).1 (unslot tp tn k).2 t)
+    let ns := nullSet S t
+    (Array.range S.K).map fun k => ns.testBit k
 
 omit [CharClass κ] [DecidableEq κ] [Hashable κ] in
-theorem nulRow_get {mp mn : Side} {t : Regex κ} (ht : masksOk mp mn t = true) (pc nc : Side) (hn : nc.isEnd = false) :
-    (nulRow mp mn t)[slot mp mn pc nc]? = some (nullB pc nc t) := by
-  obtain ⟨hw, hp, hq⟩ := masksOk_spec ht
+theorem nulRow_get (S : Slots) {t : Regex κ} (hend : ∀ k, (S.cx k).2.isEnd = false) {k : Nat} (hk : k < S.K) :
+    (nulRow S t)[k]? = some (nullB (S.cx k).1 (S.cx k).2 t) := by
   unfold nulRow
   split
-  · rename_i hf; simp [slot_lt, nullB_ctxFree pc nc .nothing .nothing hn t hf]
-  · have hn' : (mn.proj nc).isEnd = false := by simp [Side.proj, hn]
-    rw [spread_get, Array.getD_eq_getD_getElem?]
-    simp [slot_lt, nullB_unslot hn' hw, nullB_proj hw hp hq pc nc hn]
+  · rename_i hf; simp [hk, nullB_ctxFree (S.cx k).1 (S.cx k).2 .nothing .nothing (hend k) t hf]
+  · simp [hk, testBit_nullSet S hk]
 
-/-- A term's nullability at the end, after a character in each slot. -/
+/-- A term's nullability at the end, after a character of each class (the
+slots `F`, whose contexts are a class and the end). -/
 @[specialize]
-def finRow (mp : Side) (t : Regex κ) : Array Bool :=
-  if ctxFree t then
-    let b := nullB .nothing .atEnd t
-    (Array.range mp.size).map fun _ => b
-  else
-    let tp := (reads t).1
-    let row := (Array.range tp.size).map fun k => nullB (decode tp k) .atEnd t
-    (Array.range mp.size).map fun k => row.getD (code tp (decode mp k)) false
+def finRow (F : Slots) (t : Regex κ) : Array Bool :=
+  let ns := nullSet F t
+  (Array.range F.K).map fun k => ns.testBit k
 
 omit [CharClass κ] [DecidableEq κ] [Hashable κ] in
-theorem finRow_get {mp mn : Side} {t : Regex κ} (ht : masksOk mp mn t = true) (pc : Side) :
-    (finRow mp t)[code mp pc]? = some (nullB pc .atEnd t) := by
-  obtain ⟨hw, hp, -⟩ := masksOk_spec ht
-  have hk := code_lt mp pc
+theorem finRow_get (F : Slots) {t : Regex κ} {k : Nat} (hk : k < F.K) :
+    (finRow F t)[k]? = some (nullB (F.cx k).1 (F.cx k).2 t) := by
   unfold finRow
-  split
-  · rename_i hf; simp [hk, nullB_ctxFree pc .atEnd .nothing .atEnd rfl t hf]
-  · simp only [Array.getElem?_map, Array.getElem?_range, hk, ↓reduceIte, Option.map_some, Option.some.injEq,
-      Array.getD_eq_getD_getElem?, decode_code, code_lt, Option.getD_some]
-    rw [Side.proj_proj_of_le hp]
-    exact nullB_agree (Side.proj_proj _ _) rfl rfl t hw
+  simp [hk, testBit_nullSet F hk]
 
 /-- Every derivative of `t` was numbered, and its number stands for it; and
 its masks are right. -/
 @[specialize]
-def checkTerm (mp mn : Side) (terms : Array (Regex κ)) (idx : Std.HashMap (Regex κ) Nat) (t : Regex κ) : Bool :=
-  masksOk mp mn t &&
-    (slots t).all fun pn => (lin pn.1 pn.2 t).all fun kq => decide (terms[idx.getD kq.2 0]? = some kq.2)
+def checkTermOf (mp mn : Side) (terms : Array (Regex κ)) (idx : Std.HashMap (Regex κ) Nat) (t : Regex κ)
+    (ls : List (κ × Regex κ × Nat)) : Bool :=
+  masksOk mp mn t && ls.all fun e => decide (terms[idx.getD e.2.1 0]? = some e.2.1)
+
+/-- `checkTermOf` on the term's tagged linear form. -/
+@[specialize]
+def checkTerm (S : Slots) (mp mn : Side) (terms : Array (Regex κ))
+    (idx : Std.HashMap (Regex κ) Nat) (t : Regex κ) : Bool :=
+  checkTermOf mp mn terms idx t (linS S S.all t)
 
 omit [CharClass κ] in
-theorem checkTerm_spec {mp mn : Side} {terms : Array (Regex κ)} {idx : Std.HashMap (Regex κ) Nat} {t : Regex κ}
-    (h : checkTerm mp mn terms idx t = true) (pc nc : Side) (hn : nc.isEnd = false) :
-    ∀ kq ∈ lin pc nc t, terms[idx.getD kq.2 0]? = some kq.2 := by
+theorem checkTerm_spec (S : Slots) {mp mn : Side} {terms : Array (Regex κ)} {idx : Std.HashMap (Regex κ) Nat}
+    {t : Regex κ} (h : checkTerm S mp mn terms idx t = true) {k : Nat} (hk : k < S.K) :
+    ∀ kq ∈ lin (S.cx k).1 (S.cx k).2 t, terms[idx.getD kq.2 0]? = some kq.2 := by
   intro kq hkq
-  unfold checkTerm slots at h
+  unfold checkTerm checkTermOf at h
   rw [Bool.and_eq_true] at h
-  obtain ⟨hm, h⟩ := h
-  rw [← lin_unslot hn (masksOk_spec hm).1] at hkq
-  have h1 := List.all_eq_true.1 h _ (mem_combos _ _ pc nc)
-  have h2 := List.all_eq_true.1 h1 kq hkq
-  simpa using h2
+  have hs := atSlot_linS S hk S.all t
+  simp only [S.hall k, hk, decide_true, ↓reduceIte] at hs
+  rw [← hs, atSlot, List.mem_filterMap] at hkq
+  obtain ⟨e, he, hkq⟩ := hkq
+  split at hkq
+  · simp only [Option.some.injEq] at hkq; subst hkq
+    simpa using List.all_eq_true.1 h.2 e he
+  · cases hkq
 
 theorem range8_get {k : Nat} (h : k < 8) : (Array.range 8)[k]? = some k := by
   simp [h]
 
-/-- Compile `r`: number its derivative terms, find the bits its assertions
-read, and fill the tables, checking the numbering (`none` if it were
-incomplete, and then the plain scan runs). -/
+theorem slot_div_mod {P a b : Nat} (ha : a < P) : (a + P * b) % P = a ∧ (a + P * b) / P = b := by
+  have hP : 0 < P := by omega
+  refine ⟨?_, ?_⟩
+  · rw [Nat.add_mul_mod_self_left, Nat.mod_eq_of_lt ha]
+  · rw [Nat.add_mul_div_left _ _ hP, Nat.div_eq_of_lt ha, Nat.zero_add]
+
+theorem slot_lt {P Q a b : Nat} (ha : a < P) (hb : b < Q) : a + P * b < P * Q := by
+  calc a + P * b < P + P * b := by omega
+    _ = P * (b + 1) := by rw [Nat.mul_add, Nat.mul_one, Nat.add_comm]
+    _ ≤ P * Q := Nat.mul_le_mul_left _ hb
+
+/-- Compile `r`: number its derivative terms, find the classes of context
+its assertions tell apart, and fill the tables, checking the numbering
+(`none` if it were incomplete, and then the plain scan runs). -/
 @[specialize]
 def Nfa.build (r : Regex κ) : Option (Nfa r) :=
   let st := numberTerms r
   let terms := st.1
   let idx := st.2
   let mp := (masks terms).1
-  let mn := (masks terms).2
+  let mn := { (masks terms).2 with isEnd := false }
+  let pcls := classes mp (sideCands κ)
+  let ncls := classes mn (sideCands κ)
+  let P := pcls.length
+  let K := slots pcls ncls
+  let S := Slots.of (fun k => (decode pcls (k % P), decode ncls (k / P))) K
+  let F := Slots.of (fun k => (decode pcls k, .atEnd)) P
+  let pf := fun s => code pcls (mp.proj s)
+  let nf := fun s => P * code ncls (mn.proj s)
   if h0 : terms[0]? = some r then
-    if hc : terms.all (checkTerm mp mn terms idx) = true then
-      have hchk : ∀ (j : Nat) (t : Regex κ), terms[j]? = some t → checkTerm mp mn terms idx t = true := by
+    -- each term with its tagged linear form, computed once for the check and the row
+    let forms := terms.map fun t => (t, linS S S.all t)
+    if hc : forms.all (fun f => checkTermOf mp mn terms idx f.1 f.2) = true then
+      have hchk : ∀ (j : Nat) (t : Regex κ), terms[j]? = some t → checkTerm S mp mn terms idx t = true := by
         intro j t ht
         have hj : j < terms.size := by
           rcases Nat.lt_or_ge j terms.size with h | h
           · exact h
           · simp [Array.getElem?_eq_none h] at ht
         have htj : terms[j] = t := by simpa [hj] using ht
-        have := (Array.all_eq_true.1 hc) j hj
-        rwa [htj] at this
-      have hw : ∀ (j : Nat) (t : Regex κ), terms[j]? = some t → masksOk mp mn t = true := fun j t ht => by
+        have := (Array.all_eq_true.1 hc) j (by simpa [forms] using hj)
+        simp only [forms, Array.getElem_map, htj] at this
+        exact this
+      have hm : ∀ (j : Nat) (t : Regex κ), terms[j]? = some t → masksOk mp mn t = true := fun j t ht => by
         have := hchk j t ht
-        unfold checkTerm at this
+        unfold checkTerm checkTermOf at this
         exact (Bool.and_eq_true _ _ ▸ this).1
+      have hpm : ∀ p, mp.proj (ctx κ p) ∈ pcls := fun p => proj_mem_classes (ctx_mem_sideCands κ p)
+      have hnm : ∀ p, mn.proj (ctx κ p) ∈ ncls := fun p => proj_mem_classes (ctx_mem_sideCands κ p)
+      -- a text's context lands on a slot whose context is its projection
+      have hslot : ∀ (p : Option Char) (c : Char),
+          codeOf κ (table κ pf) (pf .wordChar) (pf .otherChar) (pf .atEnd) p +
+            codeOf κ (table κ nf) (nf .wordChar) (nf .otherChar) 0 (some c) < K ∧
+          S.cx (codeOf κ (table κ pf) (pf .wordChar) (pf .otherChar) (pf .atEnd) p +
+            codeOf κ (table κ nf) (nf .wordChar) (nf .otherChar) 0 (some c)) =
+            (mp.proj (ctx κ p), mn.proj (ctx κ (some c))) := by
+        intro p c
+        rw [codeOf_table κ pf p, show codeOf κ (table κ nf) (nf .wordChar) (nf .otherChar) 0 (some c) =
+          codeOf κ (table κ nf) (nf .wordChar) (nf .otherChar) (nf .atEnd) (some c) from rfl, codeOf_table κ nf]
+        have ha := code_lt (hpm p)
+        have hb := code_lt (hnm (some c))
+        obtain ⟨h1, h2⟩ := slot_div_mod (P := P) (b := code ncls (mn.proj (ctx κ (some c)))) ha
+        refine ⟨slot_lt ha hb, ?_⟩
+        simp only [S, Slots.of, pf, nf, h1, h2, decode_code (hpm p), decode_code (hnm (some c))]
+      have hend : ∀ k, (S.cx k).2.isEnd = false := fun k => decode_classes_isEnd rfl _
       some {
-        terms, mp, mn
-        trans := terms.map (transRow mp mn idx), nul := terms.map (nulRow mp mn), fin := terms.map (finRow mp)
+        terms
+        trans := forms.map fun f => transRowOf S idx f.1 f.2, nul := terms.map (nulRow S), fin := terms.map (finRow F)
+        pcodes := table κ pf, pW := pf .wordChar, pN := pf .otherChar, pE := pf .atEnd
+        ncodes := table κ nf, nW := nf .wordChar, nN := nf .otherChar
         start := h0
         hTrans := by
-          intro j t ht pc nc hn
-          simp only [Array.getElem?_map, ht, Option.map_some, Option.bind_some, transRow_get idx (hw j t ht) pc nc hn,
-            Option.getD_some, numbered, List.toList_toArray, List.map_map]
+          intro j t ht p c
+          obtain ⟨hk, hcx⟩ := hslot p c
+          obtain ⟨hw, hp, hq⟩ := masksOk_spec (hm j t ht)
+          simp only [forms, Array.getElem?_map, ht, Option.map_some, Option.bind_some,
+            show transRowOf S idx t (linS S S.all t) = transRow S idx t from rfl,
+            transRow_get S idx hw hend hk, Option.getD_some, numbered, List.toList_toArray, List.map_map, hcx]
+          rw [lin_proj hw hp hq _ _ (ctx_some_isEnd κ c)]
           apply List.map_congr_left
           intro kq hkq
           simp only [Function.comp]
-          rw [checkTerm_spec (hchk j t ht) pc nc hn kq hkq]
+          have := checkTerm_spec S (hchk j t ht) hk kq (by rw [hcx, lin_proj hw hp hq _ _ (ctx_some_isEnd κ c)]; exact hkq)
+          rw [this]
         hNul := by
-          intro j t ht pc nc hn
-          simp [Array.getElem?_map, ht, nulRow_get (hw j t ht) pc nc hn]
+          intro j t ht p c
+          obtain ⟨hk, hcx⟩ := hslot p c
+          obtain ⟨hw, hp, hq⟩ := masksOk_spec (hm j t ht)
+          simp [Array.getElem?_map, ht, nulRow_get S hend hk, hcx, nullB_proj hw hp hq _ _ (ctx_some_isEnd κ c)]
         hFin := by
-          intro j t ht pc
-          simp [Array.getElem?_map, ht, finRow_get (hw j t ht) pc]
-        pcodes := (Array.range 128).map fun k => code mp (ctx κ (some (Char.ofNat k)))
-        ncodes := (Array.range 128).map fun k => mp.size * code mn (ctx κ (some (Char.ofNat k)))
-        hP := by
-          intro k v h
-          simp only [Array.getElem?_map, Array.getElem?_range] at h
-          split at h <;> simp_all
-        hN := by
-          intro k v h
-          simp only [Array.getElem?_map, Array.getElem?_range] at h
-          split at h <;> simp_all }
+          intro j t ht p
+          obtain ⟨hw, hp, -⟩ := masksOk_spec (hm j t ht)
+          have hk := code_lt (hpm p)
+          rw [codeOf_table κ pf p]
+          simp only [Array.getElem?_map, ht, Option.map_some, Option.bind_some]
+          rw [finRow_get F (k := pf (ctx κ p)) hk, Option.getD_some]
+          show nullB (decode pcls (code pcls (mp.proj (ctx κ p)))) .atEnd t = _
+          rw [decode_code (hpm p)]
+          exact nullB_agree (Side.proj_proj_of_le hp _) rfl rfl t hw }
     else none
   else none
 
