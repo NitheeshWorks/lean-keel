@@ -14,7 +14,7 @@ under github.com/NitheeshWorks (lean-keel and its dependencies, one repo each).
 lake build                              # library + proofs + test executables
 lake exe props [seed]                   # property tests, < 1 s
 lake exe conformance                    # upstream-mirroring cases
-lake env lean --run scripts/Axioms.lean Keel   # axiom hygiene
+lake exe axioms Keel                    # axiom hygiene (the pinned gate)
 scripts/check.sh [--quick|--pbt]        # the whole gate
 lake env lean Keel/Proofs/Foo.lean     # check one file (never bare `lean`)
 ```

@@ -1,6 +1,6 @@
 name = "Keel"
 version = "0.1.0"
-defaultTargets = ["Keel", "props", "conformance", "Examples", "examples", "bench"]
+defaultTargets = ["Keel", "props", "conformance", "Examples", "examples", "bench", "axioms"]
 
 # The verified library. Everything under Keel/ except Transport.lean is a
 # total function and the proof surface; see CONTRIBUTING.md.
@@ -35,3 +35,11 @@ srcDir = "examples"
 [[lean_exe]]
 name = "bench"
 root = "tests.Bench"
+
+# The verification gate, compiled: scripts/Axioms.lean is a byte-for-byte
+# copy of stack-tools/Axioms.lean, pinned by scripts/Axioms.sha256.
+# `lake exe axioms Keel`.
+[[lean_exe]]
+name = "axioms"
+root = "scripts.Axioms"
+supportInterpreter = true

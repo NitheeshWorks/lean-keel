@@ -61,7 +61,9 @@ defined; the laws users cite live in `Proofs/`.
   (`*_valid`, `*_follow`) reduce them for concrete codecs, so `simp` and then
   `decide` discharge them. `Codec.refine` moves a condition into the type.
 * **The gate.** `scripts/check.sh` runs what CI runs: build, the verification
-  gate (`scripts/Axioms.lean`: every declaration under `Keel` reaches only
+  gate (`lake exe axioms Keel`, built from `scripts/Axioms.lean`, a byte-for-byte
+  copy of `stack-tools/Axioms.lean` pinned by `scripts/Axioms.sha256`, which
+  the gate checks first: every declaration under `Keel` reaches only
   `propext`, `Quot.sound` and `Classical.choice`, and none is `partial`,
   `unsafe`, `implemented_by` or `extern`; `scripts/gate-allow.txt` is empty),
   `lake exe props`, `lake exe conformance`, the traceability check, and with
@@ -177,7 +179,7 @@ routing tests.
   compares the compiled matcher (cached path included) with the scan on
   random patterns with every assertion, in every mode.
 * `examples/`: one worked example per theory (`examples/MANIFEST.toml`),
-  built by default, gated by `scripts/Axioms.lean Examples`, and run by
+  built by default, gated by `lake exe axioms Examples`, and run by
   `lake exe examples`. An example that needs a workaround is an API bug: fix
   the API (`avoids_cons_of_not_mem`, `Refine.Issue`/`Validator.field`, and
   `Route.matches_of_match` came from writing them).
