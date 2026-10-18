@@ -40,7 +40,10 @@ defined; the laws users cite live in `Proofs/`.
   deep as the input nests, so 10^6 nested brackets exhaust a native stack.
   `fixDepth max F` is structural on `max`, so no input drives it deeper than
   `max` nested calls; past the bound it fails with `depthExceeded`. Parsers of
-  untrusted input use `fixDepth`. The loops (`many`, `takeWhile`, `manyTill`,
+  untrusted input use `fixDepth`. Whenever it succeeds it agrees with `fix`
+  (`fixDepth_ok`), for a body that does not swallow consumed failures
+  (`Parser.Monotone`, an honest condition: `attempt` around the recursive call
+  breaks it, and then the bound can change the result). The loops (`many`, `takeWhile`, `manyTill`,
   `sepBy`) are accumulator loops in constant stack; `tests/Props.lean` probes
   both natively (10^6 nesting, 10^7 width).
 * **Laws on lists, code on arrays.** Every parser law is an equation for

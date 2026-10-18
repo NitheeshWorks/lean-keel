@@ -26,9 +26,18 @@ open Keel
 inductive Tree where | leaf (n : Nat) | node (ts : List Tree)
 
 open Parser in
-def tree : Parser Char Parse.Error Tree := fixDepth 512 fun self =>
+def body (self : Parser Char Parse.Error Tree) : Parser Char Parse.Error Tree :=
   (do let ds ← many1 (satisfy Char.isDigit); pure (.leaf (Codec.digitsValue ds)))
   <|> (do let _ ← token '['; let ts ← sepBy self (token ','); let _ ← token ']'; pure (.node ts))
+
+def tree : Parser Char Parse.Error Tree := Parser.fixDepth 512 body
+
+-- The bound changes nothing when the parse succeeds: the body passes
+-- failures on (`Monotone`, proved by `approx`), so `fixDepth_ok` applies.
+theorem body_monotone : Parser.Monotone body := fun p q h => by unfold body; approx
+
+example {l r : List Char} {t : Tree} (h : tree.parse l = .ok t r) : (Parser.fix body).parse l = .ok t r :=
+  Parser.fixDepth_ok body_monotone h
 
 #eval (tree.parseString "[1,[22,3],[]]").isOk   -- true: a value, with the proof it is the list meaning
 
@@ -89,10 +98,14 @@ the gate (`scripts/Axioms.lean`): only `propext`, `Quot.sound` and
   never has more than `max` recursive calls active, by structural recursion on
   `max`, so its native stack depth is bounded whatever the input; past the
   bound it fails with `depthExceeded`, as a consumed failure no alternative
-  can swallow. `parse_fixDepth_zero : (fixDepth 0 F).parse l = .error ParseError.depthExceeded l.tail`,
-  `parse_fixDepth_succ : (fixDepth (d + 1) F).parse l = (F (guarded l.length fun _ _ => fixDepth d F)).parse l`,
-  and within the bound it is the fixpoint:
-  `fixDepth_eq_fix : l.length < d → (fixDepth d F).parse l = (fix F).parse l`.
+  can swallow. **Whenever it succeeds, it gives the unbounded fixpoint's
+  result**, for a body that does not swallow failures that consumed input
+  (`Parser.Monotone F`, which every combinator but `attempt` preserves; the
+  `approx` tactic proves it for a body built from them):
+  `fixDepth_ok : Monotone F → (fixDepth d F).parse l = .ok a r → (fix F).parse l = .ok a r`.
+  More precisely `fixDepth_approx`: on every input it agrees with `fix F` or
+  fails having consumed input. And `parse_fixDepth_zero : (fixDepth 0 F).parse (t :: l) = .error ParseError.depthExceeded l`,
+  `parse_fixDepth_succ : (fixDepth (d + 1) F).parse l = (F (guarded l.length fun _ _ => fixDepth d F)).parse l`.
 * **Unbounded recursion.** `parse_fix : (fix F).parse l = (F (below F l.length)).parse l` and
   `parse_below_of_lt : l.length < n → (below F n).parse l = (fix F).parse l`:
   the recursive handle is the fixpoint on every strictly shorter input. `fix`

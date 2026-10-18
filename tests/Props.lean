@@ -142,6 +142,16 @@ def properties : List Property := [
       | .error (.depthExceeded, _) => true
       | _ => false)
     "nesting 10^6",
+  prop "Parse.fixDepth_ok: a shallow bound, when it succeeds, gives fix's result"
+    (fun r => r.tree 4)
+    (fun t => let s := t.render
+      match (Parser.fixDepth 2 treeBody).parse s with
+      | .ok a [] => match (Parser.fix treeBody).parse s with
+        | .ok b [] => a.beq b
+        | _ => false
+      | .ok _ _ => false
+      | .error _ _ => true)
+    (fun t => String.ofList t.render),
   prop "Parse.fixDepth agrees with fix within the bound"
     (fun r => r.tree 4)
     (fun t => let s := t.render

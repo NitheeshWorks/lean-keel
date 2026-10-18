@@ -468,6 +468,21 @@ def fix [ParseError ε] (F : Parser τ ε α → Parser τ ε α) : Parser τ ε
     simp only [hL]; exact (F _).run_eq s i
   pos_le l := (F _).pos_le l
 
+/-! ## Approximation -/
+
+/-- `p` approximates `q`: on every list, `p` does exactly what `q` does, or
+fails having consumed input (as a depth-bounded handle does past its
+bound). -/
+def Approx (p q : Parser τ ε α) : Prop :=
+  ∀ l, p.parse l = q.parse l ∨ ∃ e r, p.parse l = .error e r ∧ r.length < l.length
+
+/-- `F` preserves approximation: it does not swallow a failure that consumed
+input. Every combinator except `attempt` (and `notFollowedBy`, built on it)
+passes such a failure on, so a recursive body built from them is monotone:
+the `Approx.*` lemmas below prove it piece by piece. -/
+def Monotone {ε' α' : Type} (F : Parser τ ε α → Parser τ ε' α') : Prop :=
+  ∀ p q, Approx p q → Approx (F p) (F q)
+
 /-- Fail with `e` as a failure that consumed: reported one token on (or where
 it stands, at the end of input), so no alternative takes over. -/
 def failAhead (e : ε) : Parser τ ε α where
@@ -492,7 +507,25 @@ native stack depth is bounded whatever the input: this is the form to use on
 untrusted input. As in `fix`, the handle runs only on strictly fewer tokens. -/
 def fixDepth [ParseError ε] (max : Nat) (F : Parser τ ε α → Parser τ ε α) : Parser τ ε α :=
   match max with
-  | 0 => failAhead ParseError.depthExceeded
+  | 0 =>
+    -- At the end of input there is nothing to recurse on: run `F` once with a
+    -- handle that always reports `stuck` (as `fix` does there). Elsewhere the
+    -- bound is reached.
+    { run := fun s i => if Input.size s - i = 0 then (F (below F 0)).run s i
+        else (failAhead ParseError.depthExceeded).run s i
+      run_eq := fun s i => by
+        have hL : Input.size (Input.rest s i) - 0 = Input.size s - i := by
+          rw [Input.size_list, Input.length_rest, Nat.sub_zero]
+        show (if _ then _ else _) = Result.shift i (if _ then _ else _)
+        rw [hL]
+        by_cases h : Input.size s - i = 0
+        · rw [ite_eq_left h, ite_eq_left h]; exact (F _).run_eq s i
+        · rw [ite_eq_right h, ite_eq_right h]; exact (failAhead _).run_eq s i
+      pos_le := fun l => by
+        show Result.pos (if _ then _ else _) ≤ _
+        split
+        · exact (F _).pos_le l
+        · exact (failAhead _).pos_le l }
   | d + 1 =>
     { run := fun s i => (F (guarded (Input.size s - i) fun _ _ => fixDepth d F)).run s i
       run_eq := fun s i => by

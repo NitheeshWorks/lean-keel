@@ -329,7 +329,7 @@ upstream = "STYLE.md section 2: total parsing"
 title = "Depth-bounded recursion: no input drives fixDepth deeper than its bound; past it, depthExceeded; within it, fix"
 status = "implemented"
 realises = ["Keel.Parser.fixDepth", "Keel.Parser.failAhead"]
-theorem = ["Keel.Parser.parse_fixDepth_zero", "Keel.Parser.parse_fixDepth_succ", "Keel.Parser.fixDepth_eq_fix"]
+theorem = ["Keel.Parser.parse_fixDepth_zero", "Keel.Parser.parse_fixDepth_zero_nil", "Keel.Parser.parse_fixDepth_succ", "Keel.Parser.fixDepth_eq_fix", "Keel.Parser.fixDepth_ok", "Keel.Parser.fixDepth_approx", "Keel.Parser.Approx.many", "Keel.Parser.Approx.orElse"]
 test = ["tests/Props.lean::Parse.fixDepth: 10^6 nested brackets fail with depthExceeded, natively, no crash"]
 
 [[requirement]]

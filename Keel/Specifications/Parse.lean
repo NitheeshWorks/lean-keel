@@ -74,10 +74,12 @@ def ParseBelow : Prop :=
   ∀ (τ ε α : Type) [ParseError ε] (F : Parser τ ε α → Parser τ ε α) (n : Nat) (l : List τ),
     (below F n).parse l = if l.length < n then (fix F).parse l else .error ParseError.stuck l
 
-/-- Past the bound, the bounded fixpoint fails with `depthExceeded`. -/
+/-- Past the bound, the bounded fixpoint fails with `depthExceeded`, as a
+failure that consumed; at the end of input it is the fixpoint. -/
 def ParseFixDepthZero : Prop :=
-  ∀ (τ ε α : Type) [ParseError ε] (F : Parser τ ε α → Parser τ ε α) (l : List τ),
-    (fixDepth 0 F).parse l = .error ParseError.depthExceeded l.tail
+  ∀ (τ ε α : Type) [ParseError ε] (F : Parser τ ε α → Parser τ ε α) (t : τ) (l : List τ),
+    (fixDepth 0 F).parse (t :: l) = .error ParseError.depthExceeded l ∧
+      (fixDepth 0 F).parse [] = (fix F).parse []
 
 /-- One level of the bounded fixpoint: `F` with a handle one level shallower,
 on strictly fewer tokens. -/
@@ -89,5 +91,18 @@ def ParseFixDepthSucc : Prop :=
 def FixDepthEqFix : Prop :=
   ∀ (τ ε α : Type) [ParseError ε] (F : Parser τ ε α → Parser τ ε α) (d : Nat) (l : List τ),
     l.length < d → (fixDepth d F).parse l = (fix F).parse l
+
+/-- **Whenever the bounded fixpoint succeeds, the fixpoint gives the same
+result**, for a body that does not swallow failures that consumed input
+(`Parser.Monotone`). -/
+def FixDepthOk : Prop :=
+  ∀ (τ ε α : Type) [ParseError ε] (F : Parser τ ε α → Parser τ ε α) (d : Nat) (l : List τ) (a : α)
+    (r : List τ), Monotone F → (fixDepth d F).parse l = .ok a r → (fix F).parse l = .ok a r
+
+/-- The bounded fixpoint approximates the fixpoint: on every input it agrees,
+or fails having consumed input. -/
+def FixDepthApprox : Prop :=
+  ∀ (τ ε α : Type) [ParseError ε] (F : Parser τ ε α → Parser τ ε α) (d : Nat),
+    Monotone F → Approx (fixDepth d F) (fix F)
 
 end Keel.Spec

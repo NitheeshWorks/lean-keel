@@ -505,10 +505,20 @@ theorem parse_guarded [ParseError ε] (n : Nat) (G : (m : Nat) → m < n → Par
   cases l <;> rfl
 
 /-- **Past the bound**: no nested call is left, so the parser fails with
-`depthExceeded`, as a failure that consumed (one token, if there is one). -/
-@[simp] theorem parse_fixDepth_zero [ParseError ε] (F : Parser τ ε α → Parser τ ε α) (l : List τ) :
-    (fixDepth 0 F).parse l = .error ParseError.depthExceeded l.tail := by
-  simp [fixDepth]
+`depthExceeded`, as a failure that consumed. -/
+@[simp] theorem parse_fixDepth_zero [ParseError ε] (F : Parser τ ε α → Parser τ ε α) (t : τ) (l : List τ) :
+    (fixDepth 0 F).parse (t :: l) = .error ParseError.depthExceeded l := by
+  unfold Parser.parse fixDepth
+  simp only [Input.size_list, List.length_cons, Nat.sub_zero, Nat.add_one_ne_zero, ite_false]
+  rfl
+
+/-- At the end of input there is nothing to recurse on, and the bounded
+fixpoint is the fixpoint. -/
+@[simp] theorem parse_fixDepth_zero_nil [ParseError ε] (F : Parser τ ε α → Parser τ ε α) :
+    (fixDepth 0 F).parse [] = (fix F).parse [] := by
+  rw [parse_fix]
+  unfold Parser.parse fixDepth
+  simp only [Input.size_list, List.length_nil, Nat.sub_zero, ite_true]
 
 /-- **One level**: `fixDepth (d + 1) F` is `F` applied to a handle that runs
 `fixDepth d F` on strictly fewer tokens. -/
@@ -517,9 +527,9 @@ theorem parse_fixDepth_succ [ParseError ε] (d : Nat) (F : Parser τ ε α → P
   show ((F (guarded (l.length - 0) fun _ _ => fixDepth d F)).run l 0).toReply l = _
   rw [Nat.sub_zero]; rfl
 
-/-- **The bound is the only difference**: with more depth than tokens (every
-nested call consumes, so no input nests deeper than its length), the bounded
-fixpoint is the unbounded one. -/
+/-- **The bound is the only difference** on short inputs: with more depth than
+tokens (every nested call consumes, so no input nests deeper than its
+length), the bounded fixpoint is the unbounded one. -/
 theorem fixDepth_eq_fix [ParseError ε] (F : Parser τ ε α → Parser τ ε α) :
     ∀ (d : Nat) (l : List τ), l.length < d → (fixDepth d F).parse l = (fix F).parse l
   | 0, _, h => absurd h (Nat.not_lt_zero _)
@@ -534,6 +544,193 @@ theorem fixDepth_eq_fix [ParseError ε] (F : Parser τ ε α → Parser τ ε α
         exact fixDepth_eq_fix F d l' (by omega)
       · rw [dite_eq_right h', ite_eq_right h']
     rw [hhandle]
+
+/-! ## Approximation: when a bounded parser agrees with the unbounded one -/
+
+namespace Approx
+
+theorem refl (p : Parser τ ε α) : Approx p p := fun _ => Or.inl rfl
+
+/-- What is left after a step is no longer than the input. -/
+theorem rest_length_le (p : Parser τ ε α) (l : List τ) : (p.parse l).rest.length ≤ l.length :=
+  (p.parse_rest_suffix l).length_le
+
+theorem bind {p q : Parser τ ε α} {f g : α → Parser τ ε β} (hp : Approx p q)
+    (hf : ∀ a, Approx (f a) (g a)) : Approx (p >>= f) (q >>= g) := by
+  intro l
+  rw [parse_bind, parse_bind]
+  rcases hp l with h | ⟨e, r, h, hr⟩
+  · rw [← h]
+    cases hc : p.parse l with
+    | ok a r =>
+      have hle := rest_length_le p l
+      rw [hc] at hle
+      simp only [Reply.bind_ok, Reply.rest] at hle ⊢
+      rcases hf a r with h' | ⟨e', r', h', hr'⟩
+      · exact Or.inl h'
+      · exact Or.inr ⟨e', r', h', by omega⟩
+    | error e r => exact Or.inl rfl
+  · rw [h]; exact Or.inr ⟨e, r, rfl, hr⟩
+
+theorem map {p q : Parser τ ε α} (f : α → β) (hp : Approx p q) : Approx (f <$> p) (f <$> q) := by
+  rw [← bind_pure_comp, ← bind_pure_comp]
+  exact bind hp fun _ => refl _
+
+theorem seqRight {p q : Parser τ ε α} {p' q' : Parser τ ε β} (hp : Approx p q) (hp' : Approx p' q') :
+    Approx (p *> p') (q *> q') := by
+  rw [seqRight_eq_bind, seqRight_eq_bind]
+  exact bind hp fun _ => hp'
+
+theorem seqLeft {p q : Parser τ ε α} {p' q' : Parser τ ε β} (hp : Approx p q) (hp' : Approx p' q') :
+    Approx (p <* p') (q <* q') := by
+  rw [seqLeft_eq_bind, seqLeft_eq_bind]
+  exact bind hp fun a => map _ hp'
+
+theorem orElse {p q p' q' : Parser τ ε α} (hp : Approx p q) (hp' : Approx p' q') :
+    Approx (p <|> p') (q <|> q') := by
+  intro l
+  rw [parse_orElse, parse_orElse]
+  rcases hp l with h | ⟨e, r, h, hr⟩
+  · rw [← h]
+    cases p.parse l with
+    | ok a r => exact Or.inl rfl
+    | error e r =>
+      simp only
+      split
+      · exact hp' l
+      · exact Or.inl rfl
+  · rw [h]
+    simp only [Nat.ne_of_lt hr, ite_false]
+    exact Or.inr ⟨e, r, rfl, hr⟩
+
+theorem lookahead {p q : Parser τ ε α} (hp : Approx p q) : Approx p.lookahead q.lookahead := by
+  intro l
+  rw [parse_lookahead, parse_lookahead]
+  rcases hp l with h | ⟨e, r, h, hr⟩
+  · rw [h]; exact Or.inl rfl
+  · rw [h]; exact Or.inr ⟨e, r, rfl, hr⟩
+
+theorem mapError {p q : Parser τ ε α} (f : ε → ε') (hp : Approx p q) :
+    Approx (p.mapError f) (q.mapError f) := by
+  intro l
+  rw [parse_mapError, parse_mapError]
+  rcases hp l with h | ⟨e, r, h, hr⟩
+  · rw [h]; exact Or.inl rfl
+  · rw [h]; exact Or.inr ⟨f e, r, rfl, hr⟩
+
+theorem many {p q : Parser τ ε α} (hp : Approx p q) : Approx p.many q.many := by
+  suffices h : ∀ n (l : List τ), l.length = n →
+      (p.many.parse l = q.many.parse l ∨ ∃ e r, p.many.parse l = .error e r ∧ r.length < l.length) from
+    fun l => h _ l rfl
+  intro n
+  induction n using Nat.strongRecOn with
+  | ind n ih =>
+    intro l hn
+    rw [parse_many p, parse_many q]
+    rcases hp l with h | ⟨e, r, h, hr⟩
+    · rw [← h]
+      cases hc : p.parse l with
+      | ok a r =>
+        have hle := rest_length_le p l
+        rw [hc] at hle
+        simp only [Reply.rest] at hle
+        simp only
+        split
+        · exact Or.inl rfl
+        · rename_i hne
+          rcases ih r.length (by omega) r rfl with h' | ⟨e', r', h', hr'⟩
+          · rw [h']; exact Or.inl rfl
+          · rw [h']; exact Or.inr ⟨e', r', rfl, by omega⟩
+      | error e r => exact Or.inl rfl
+    · rw [h]
+      simp only [Nat.ne_of_lt hr, ite_false]
+      exact Or.inr ⟨e, r, rfl, hr⟩
+
+theorem many1 {p q : Parser τ ε α} (hp : Approx p q) : Approx p.many1 q.many1 :=
+  bind hp fun _ => bind (many hp) fun _ => refl _
+
+theorem sepBy1 {p q : Parser τ ε α} {s t : Parser τ ε β} (hp : Approx p q) (hs : Approx s t) :
+    Approx (p.sepBy1 s) (q.sepBy1 t) :=
+  bind hp fun _ => bind (many (seqRight hs hp)) fun _ => refl _
+
+theorem sepBy {p q : Parser τ ε α} {s t : Parser τ ε β} (hp : Approx p q) (hs : Approx s t) :
+    Approx (p.sepBy s) (q.sepBy t) :=
+  orElse (sepBy1 hp hs) (refl _)
+
+theorem optional {p q : Parser τ ε α} (hp : Approx p q) : Approx p.optional q.optional :=
+  orElse (map _ hp) (refl _)
+
+end Approx
+
+/-- Prove `Approx (F p) (F q)` from `Approx p q` for a body built from the
+combinators (`<|>`, `>>=`, `do`, `<$>`, `*>`, `<*`, `many`, `many1`, `sepBy`,
+`sepBy1`, `optional`, `lookahead`, `mapError`, constants): the usual way to
+discharge `Parser.Monotone F`, as `fun p q h => by approx`. -/
+macro "approx" : tactic => `(tactic| repeat (first
+  | assumption
+  | exact Approx.refl _
+  | intro _
+  | apply Approx.orElse
+  | apply Approx.bind
+  | apply Approx.seqRight
+  | apply Approx.seqLeft
+  | apply Approx.map
+  | apply Approx.sepBy
+  | apply Approx.sepBy1
+  | apply Approx.many1
+  | apply Approx.many
+  | apply Approx.optional
+  | apply Approx.lookahead
+  | apply Approx.mapError))
+
+theorem guarded_approx [ParseError ε] (n : Nat) {G H : (m : Nat) → m < n → Parser τ ε α}
+    (h : ∀ m hm, Approx (G m hm) (H m hm)) : Approx (guarded n G) (guarded n H) := by
+  intro l
+  rw [parse_guarded, parse_guarded]
+  split
+  · exact h _ _ l
+  · exact Or.inl rfl
+
+/-- **The bounded fixpoint approximates the fixpoint**: on every input it
+does exactly what `fix F` does, or fails having consumed input (the depth
+bound was reached), provided `F` does not swallow such failures. -/
+theorem fixDepth_approx [ParseError ε] {F : Parser τ ε α → Parser τ ε α} (hF : Monotone F) :
+    ∀ d, Approx (fixDepth d F) (fix F)
+  | 0 => by
+    intro l
+    cases l with
+    | nil => exact Or.inl (parse_fixDepth_zero_nil F)
+    | cons t l => exact Or.inr ⟨_, l, parse_fixDepth_zero F t l, by simp⟩
+  | d + 1 => by
+    intro l
+    rw [parse_fixDepth_succ, parse_fix]
+    have hhandle : Approx (guarded l.length fun _ _ => fixDepth d F) (below F l.length) := by
+      intro l'
+      rw [parse_guarded, parse_below]
+      split
+      · exact fixDepth_approx hF d l'
+      · exact Or.inl rfl
+    exact hF _ _ hhandle l
+
+/-- **Whenever the bounded fixpoint succeeds, it agrees with the fixpoint**
+(for a body that does not swallow failures that consumed input). -/
+theorem fixDepth_ok [ParseError ε] {F : Parser τ ε α → Parser τ ε α} (hF : Monotone F) {d : Nat}
+    {l : List τ} {a : α} {r : List τ} (h : (fixDepth d F).parse l = .ok a r) :
+    (fix F).parse l = .ok a r := by
+  rcases fixDepth_approx hF d l with h' | ⟨e, r', h', _⟩
+  · rw [← h', h]
+  · rw [h] at h'; cases h'
+
+/-- More generally, unless it failed having consumed input, the bounded
+fixpoint gives exactly the fixpoint's result: its successes, and its
+failures that consumed nothing. -/
+theorem fixDepth_eq_fix_of_not_consumed [ParseError ε] {F : Parser τ ε α → Parser τ ε α}
+    (hF : Monotone F) (d : Nat) (l : List τ)
+    (h : ∀ e r, (fixDepth d F).parse l = .error e r → r.length = l.length) :
+    (fixDepth d F).parse l = (fix F).parse l := by
+  rcases fixDepth_approx hF d l with h' | ⟨e, r, h', hr⟩
+  · exact h'
+  · have := h e r h'; omega
 
 end Parser
 

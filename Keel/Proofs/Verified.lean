@@ -33,6 +33,8 @@ structure VerifiedParse where
   fixDepthZero : Spec.ParseFixDepthZero
   fixDepthSucc : Spec.ParseFixDepthSucc
   fixDepthEqFix : Spec.FixDepthEqFix
+  fixDepthOk : Spec.FixDepthOk
+  fixDepthApprox : Spec.FixDepthApprox
 
 theorem theVerifiedParse : VerifiedParse where
   ext _ _ _ _ _ h := Parser.ext h
@@ -45,9 +47,11 @@ theorem theVerifiedParse : VerifiedParse where
   takeWhile _ _ _ := Parser.parse_takeWhile
   fix _ _ _ _ := Parser.parse_fix
   below _ _ _ _ := Parser.parse_below
-  fixDepthZero _ _ _ _ := Parser.parse_fixDepth_zero
+  fixDepthZero _ _ _ _ F t l := ⟨Parser.parse_fixDepth_zero F t l, Parser.parse_fixDepth_zero_nil F⟩
   fixDepthSucc _ _ _ _ := Parser.parse_fixDepth_succ
   fixDepthEqFix _ _ _ _ F d l h := Parser.fixDepth_eq_fix F d l h
+  fixDepthOk _ _ _ _ _ _ _ _ _ hF h := Parser.fixDepth_ok hF h
+  fixDepthApprox _ _ _ _ _ d hF := Parser.fixDepth_approx hF d
 
 /-- Lawful codecs: the general law and its forms, and one law per
 combinator. -/
