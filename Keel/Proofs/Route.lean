@@ -191,6 +191,22 @@ section Dispatch
 universe u
 variable {ρ : Type u} {β : ρ → Type} (m : (r : ρ) → Match (β r))
 
+/-- Where `r` occurs in a list headed by `r₀`: at the head, or in the tail. -/
+theorem exists_cons_split {α : Type u} (r₀ r : α) (rs : List α) (P : List α → Prop) :
+    (∃ pre post, r₀ :: rs = pre ++ r :: post ∧ P pre) ↔
+      (r₀ = r ∧ P []) ∨ ∃ pre post, rs = pre ++ r :: post ∧ P (r₀ :: pre) := by
+  constructor
+  · rintro ⟨pre, post, he, hp⟩
+    cases pre with
+    | nil => simp only [List.nil_append, List.cons.injEq] at he; exact Or.inl ⟨he.1, hp⟩
+    | cons p pre =>
+      simp only [List.cons_append, List.cons.injEq] at he
+      obtain ⟨rfl, he⟩ := he
+      exact Or.inr ⟨pre, post, he, hp⟩
+  · rintro (⟨rfl, hp⟩ | ⟨pre, post, he, hp⟩)
+    · exact ⟨[], rs, rfl, hp⟩
+    · exact ⟨r₀ :: pre, post, by simp [he], hp⟩
+
 /-- **First match.** The dispatch finds `r` exactly when `r` matches fully and
 no earlier route does. -/
 theorem dispatch_found_iff : ∀ (rs : List ρ) (r : ρ) (b : β r),
@@ -198,94 +214,28 @@ theorem dispatch_found_iff : ∀ (rs : List ρ) (r : ρ) (b : β r),
       ∃ pre post, rs = pre ++ r :: post ∧ m r = .full b ∧ ∀ r' ∈ pre, ¬ (m r').IsFull
   | [], r, b => by simp [dispatch]
   | r₀ :: rs, r, b => by
-    have ih := dispatch_found_iff rs r b
-    simp only [dispatch]
+    have reorg : (∃ pre post, rs = pre ++ r :: post ∧ m r = .full b ∧ ∀ r' ∈ r₀ :: pre, ¬ (m r').IsFull) ↔
+        ¬ (m r₀).IsFull ∧ dispatch m rs = .found r b := by
+      rw [dispatch_found_iff rs r b]
+      simp only [List.forall_mem_cons]
+      constructor
+      · rintro ⟨pre, post, h1, h2, h3, h4⟩; exact ⟨h3, pre, post, h1, h2, h4⟩
+      · rintro ⟨h3, pre, post, h1, h2, h4⟩; exact ⟨pre, post, h1, h2, h3, h4⟩
+    rw [exists_cons_split r₀ r rs fun pre => m r = .full b ∧ ∀ r' ∈ pre, ¬ (m r').IsFull, reorg]
+    simp only [dispatch, List.not_mem_nil, false_imp_iff, imp_true_iff, and_true]
     cases hm : m r₀ with
     | full b₀ =>
+      simp only [Match.IsFull, not_true_eq_false, false_and, or_false]
       constructor
-      · intro h
-        cases h
-        exact ⟨[], rs, rfl, hm, by simp⟩
-      · rintro ⟨pre, post, he, hr, hpre⟩
-        cases pre with
-        | nil =>
-          simp only [List.nil_append, List.cons.injEq] at he
-          obtain ⟨rfl, rfl⟩ := he
-          rw [hm] at hr; cases hr; rfl
-        | cons p pre =>
-          simp only [List.cons_append, List.cons.injEq] at he
-          obtain ⟨rfl, _⟩ := he
-          exact absurd (by rw [hm]; trivial) (hpre r₀ (by simp))
+      · intro h; cases h; exact ⟨rfl, hm⟩
+      · rintro ⟨rfl, h⟩; rw [hm] at h; cases h; rfl
     | «partial» =>
-      cases hd : dispatch m rs with
-      | found r' b' =>
-        rw [hd] at ih
-        simp only
-        constructor
-        · intro h
-          obtain ⟨pre, post, he, hr, hpre⟩ := ih.1 h
-          refine ⟨r₀ :: pre, post, by simp [he], hr, ?_⟩
-          intro r'' hr''
-          simp only [List.mem_cons] at hr''
-          rcases hr'' with rfl | hr''
-          · rw [hm]; simp [Match.IsFull]
-          · exact hpre r'' hr''
-        · rintro ⟨pre, post, he, hr, hpre⟩
-          cases pre with
-          | nil =>
-            simp only [List.nil_append, List.cons.injEq] at he
-            obtain ⟨rfl, rfl⟩ := he
-            rw [hm] at hr; cases hr
-          | cons p pre =>
-            simp only [List.cons_append, List.cons.injEq] at he
-            obtain ⟨rfl, he⟩ := he
-            exact ih.2 ⟨pre, post, he, hr, fun r'' h'' => hpre r'' (by simp [h''])⟩
-      | «partial» r' =>
-        rw [hd] at ih
-        simp only [reduceCtorEq, false_iff]
-        rintro ⟨pre, post, he, hr, hpre⟩
-        cases pre with
-        | nil =>
-          simp only [List.nil_append, List.cons.injEq] at he
-          obtain ⟨rfl, rfl⟩ := he
-          rw [hm] at hr; cases hr
-        | cons p pre =>
-          simp only [List.cons_append, List.cons.injEq] at he
-          obtain ⟨rfl, he⟩ := he
-          exact absurd (ih.2 ⟨pre, post, he, hr, fun r'' h'' => hpre r'' (by simp [h''])⟩) (by simp)
-      | none =>
-        rw [hd] at ih
-        simp only [reduceCtorEq, false_iff]
-        rintro ⟨pre, post, he, hr, hpre⟩
-        cases pre with
-        | nil =>
-          simp only [List.nil_append, List.cons.injEq] at he
-          obtain ⟨rfl, rfl⟩ := he
-          rw [hm] at hr; cases hr
-        | cons p pre =>
-          simp only [List.cons_append, List.cons.injEq] at he
-          obtain ⟨rfl, he⟩ := he
-          exact absurd (ih.2 ⟨pre, post, he, hr, fun r'' h'' => hpre r'' (by simp [h''])⟩) (by simp)
+      have : ¬ (r₀ = r ∧ m r = .full b) := by rintro ⟨rfl, h⟩; rw [hm] at h; cases h
+      simp only [Match.IsFull, not_false_eq_true, true_and, this, false_or]
+      cases dispatch m rs <;> simp
     | none =>
-      rw [ih]
-      constructor
-      · rintro ⟨pre, post, he, hr, hpre⟩
-        refine ⟨r₀ :: pre, post, by simp [he], hr, ?_⟩
-        intro r'' hr''
-        simp only [List.mem_cons] at hr''
-        rcases hr'' with rfl | hr''
-        · rw [hm]; simp [Match.IsFull]
-        · exact hpre r'' hr''
-      · rintro ⟨pre, post, he, hr, hpre⟩
-        cases pre with
-        | nil =>
-          simp only [List.nil_append, List.cons.injEq] at he
-          obtain ⟨rfl, rfl⟩ := he
-          rw [hm] at hr; cases hr
-        | cons p pre =>
-          simp only [List.cons_append, List.cons.injEq] at he
-          obtain ⟨rfl, he⟩ := he
-          exact ⟨pre, post, he, hr, fun r'' h'' => hpre r'' (by simp [h''])⟩
+      have : ¬ (r₀ = r ∧ m r = .full b) := by rintro ⟨rfl, h⟩; rw [hm] at h; cases h
+      simp only [Match.IsFull, not_false_eq_true, true_and, this, false_or]
 
 theorem dispatch_found_full {rs : List ρ} {r : ρ} {b : β r} (h : dispatch m rs = .found r b) :
     ∃ r' ∈ rs, (m r').IsFull := by
