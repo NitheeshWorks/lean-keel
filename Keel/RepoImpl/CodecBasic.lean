@@ -72,6 +72,122 @@ theorem digitsValue_decimal (n : Nat) : digitsValue (decimal n) = n := by
     · rw [digitsValue_append_digit, ih _ (by omega), digitValue_digitChar (Nat.mod_lt _ (by omega))]
       omega
 
+/-! ## Long decimals in compiled code
+
+`decimal` and `digitsValue` are the specifications. Compiled code runs
+`decimalFast` (an accumulator, eighteen digits per division: no append, no
+recursion depth) and
+`digitsValueFast` (digit runs joined pairwise, so each big-number product is
+between halves of similar size), through `@[csimp]` on their equalities. -/
+
+/-- `decimal n ++ acc`, by an accumulator. -/
+def decimalAcc (n : Nat) (acc : List Char) : List Char :=
+  if n < 10 then digitChar n :: acc else decimalAcc (n / 10) (digitChar (n % 10) :: acc)
+termination_by n
+decreasing_by omega
+
+theorem decimalAcc_eq (n : Nat) : ∀ acc, decimalAcc n acc = decimal n ++ acc := by
+  induction n using Nat.strongRecOn with
+  | ind n ih =>
+    intro acc
+    rw [decimalAcc, decimal]
+    split
+    · rfl
+    · rw [ih _ (by omega)]; simp
+
+/-- The last `k` digits of `m`, leading zeros included, in front of `acc`. -/
+def padAcc : Nat → Nat → List Char → List Char
+  | 0, _, acc => acc
+  | k + 1, m, acc => padAcc k (m / 10) (digitChar (m % 10) :: acc)
+
+theorem decimalAcc_split : ∀ (k n : Nat) (acc : List Char), 10 ^ k ≤ n →
+    decimalAcc n acc = decimalAcc (n / 10 ^ k) (padAcc k (n % 10 ^ k) acc)
+  | 0, n, acc, _ => by simp [padAcc]
+  | k + 1, n, acc, h => by
+    have h10 : ¬ n < 10 := by
+      have : 10 ≤ 10 ^ (k + 1) := by
+        rw [Nat.pow_succ]; exact Nat.le_mul_of_pos_left 10 (Nat.pow_pos (by decide))
+      omega
+    have hk : 10 ^ k ≤ n / 10 := by
+      rw [Nat.le_div_iff_mul_le (by decide), ← Nat.pow_succ]; exact h
+    rw [decimalAcc, ite_eq_right h10, decimalAcc_split k (n / 10) _ hk, padAcc, Nat.pow_succ',
+      Nat.mod_mul_right_div_self, Nat.mod_mul_right_mod, Nat.div_div_eq_div_mul]
+
+/-- `decimal n ++ acc`, eighteen digits per big-number division. -/
+def decimalChunks (n : Nat) (acc : List Char) : List Char :=
+  if n < 10 ^ 18 then decimalAcc n acc
+  else decimalChunks (n / 10 ^ 18) (padAcc 18 (n % 10 ^ 18) acc)
+termination_by n
+decreasing_by exact Nat.div_lt_self (by omega) (by decide)
+
+theorem decimalChunks_eq (n : Nat) : ∀ acc, decimalChunks n acc = decimalAcc n acc := by
+  induction n using Nat.strongRecOn with
+  | ind n ih =>
+    intro acc
+    rw [decimalChunks]
+    split
+    · rfl
+    · rename_i h
+      rw [ih _ (Nat.div_lt_self (by omega) (by decide)), ← decimalAcc_split 18 n acc (by omega)]
+
+/-- `decimal`, by an accumulator, eighteen digits at a time. -/
+def decimalFast (n : Nat) : List Char := decimalChunks n []
+
+@[csimp] theorem decimal_csimp : @decimal = @decimalFast :=
+  funext fun n => by simp [decimalFast, decimalChunks_eq, decimalAcc_eq]
+
+/-- The value of digit runs `(value, length)`, most significant first. -/
+def runsValue (l : List (Nat × Nat)) : Nat := l.foldl (fun acc x => acc * 10 ^ x.2 + x.1) 0
+
+/-- Join adjacent digit runs pairwise, in one tail-recursive pass (`acc`
+holds the joined runs, reversed). -/
+def joinPairs : List (Nat × Nat) → List (Nat × Nat) → List (Nat × Nat)
+  | acc, (a, la) :: (b, lb) :: rest => joinPairs ((a * 10 ^ lb + b, la + lb) :: acc) rest
+  | acc, [x] => (x :: acc).reverse
+  | acc, [] => acc.reverse
+
+theorem joinPairs_length : ∀ (acc l : List (Nat × Nat)),
+    (joinPairs acc l).length = acc.length + (l.length + 1) / 2
+  | acc, (a, la) :: (b, lb) :: rest => by
+    rw [joinPairs, joinPairs_length]; simp; omega
+  | acc, [x] => by simp [joinPairs]
+  | acc, [] => by simp [joinPairs]
+
+theorem joinPairs_value : ∀ (z : Nat) (acc l : List (Nat × Nat)),
+    (joinPairs acc l).foldl (fun acc x => acc * 10 ^ x.2 + x.1) z =
+      l.foldl (fun acc x => acc * 10 ^ x.2 + x.1) (acc.reverse.foldl (fun acc x => acc * 10 ^ x.2 + x.1) z)
+  | z, acc, (a, la) :: (b, lb) :: rest => by
+    rw [joinPairs, joinPairs_value]
+    simp only [List.reverse_cons, List.foldl_append, List.foldl_cons, List.foldl_nil]
+    congr 1
+    rw [Nat.pow_add, Nat.add_mul, Nat.mul_assoc, Nat.add_assoc]
+  | z, acc, [x] => by simp [joinPairs, List.foldl_append]
+  | z, acc, [] => by simp [joinPairs]
+
+/-- The value of digit runs, joining pairs until one run is left: about
+`log₂ n` passes. -/
+def joinAll (l : List (Nat × Nat)) : Nat :=
+  match l with
+  | [] => 0
+  | [x] => x.1
+  | x :: y :: rest => joinAll (joinPairs [] (x :: y :: rest))
+termination_by l.length
+decreasing_by rw [joinPairs_length]; simp; omega
+
+theorem joinAll_eq (l : List (Nat × Nat)) : joinAll l = runsValue l := by
+  induction l using joinAll.induct with
+  | case1 => simp [joinAll, runsValue]
+  | case2 x => simp [joinAll, runsValue]
+  | case3 x y rest ih =>
+    rw [joinAll, ih, runsValue, runsValue, joinPairs_value]; rfl
+
+/-- `digitsValue`, joining digit runs pairwise. -/
+def digitsValueFast (l : List Char) : Nat := joinAll (l.map fun c => (digitValue c, 1))
+
+@[csimp] theorem digitsValue_csimp : @digitsValue = @digitsValueFast := by
+  funext l
+  simp only [digitsValueFast, joinAll_eq, runsValue, List.foldl_map, Nat.pow_one, digitsValue]
+
 /-- No digit comes next. -/
 def NoDigitNext (r : List Char) : Prop := ∀ c, r.head? = some c → c.isDigit = false
 

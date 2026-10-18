@@ -199,7 +199,12 @@ def cases : List Case := [
   -- UP-031: url_path_for substitutes sequentially; Keel inserts values verbatim
   ⟨"UP-031 (starlette/routing.py::replace_params)", "a value that looks like a placeholder is kept",
     check ((path% "/{a}/{b}").urlFor ("{b}", "x", ()) == "/{b}/x" &&
-      (path% "/{a}/{b}").match "/{b}/x" == some ("{b}", "x", ()))⟩
+      (path% "/{a}/{b}").match "/{b}/x" == some ("{b}", "x", ()))⟩,
+  -- CPython's int() refuses more than sys.int_max_str_digits (4300) digits
+  ⟨"CPython int_max_str_digits (starlette/convertors.py::IntegerConvertor)",
+    "an int capture takes at most 4300 digits",
+    check ((intT.match ("/int/" ++ String.ofList (List.replicate 4300 '7'))).isSome &&
+      (intT.match ("/int/" ++ String.ofList (List.replicate 4301 '7'))).isNone)⟩
 ]
 
 def main : IO UInt32 := do

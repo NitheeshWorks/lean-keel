@@ -71,6 +71,8 @@ structure VerifiedCodec where
   manyTill : Spec.ManyTillLawful
   nat : Spec.NatLawful
   natBE : Spec.NatBELawful
+  decimalFast : Spec.DecimalFast
+  digitsValueFast : Spec.DigitsValueFast
 
 theorem theVerifiedCodec : VerifiedCodec where
   law _ _ c _ _ hv hf := c.decode_encode hv hf
@@ -90,6 +92,8 @@ theorem theVerifiedCodec : VerifiedCodec where
   manyTill _ _ _ c term _ _ h := Codec.manyTill_lawful c term h
   nat n _ hr := Codec.nat_lawful n hr
   natBE w n r h := Codec.natBE_lawful w n r h
+  decimalFast := Codec.decimal_csimp
+  digitsValueFast := Codec.digitsValue_csimp
 
 /-- Refinement and validation: soundness and completeness, and the
 location laws of validators. -/
@@ -130,6 +134,9 @@ structure VerifiedRoute where
   allowFirstPartial : Spec.AllowFirstPartial
   allowUnionOfPartials : Spec.AllowUnionOfPartials
   notFound : Spec.NotFoundIff
+  splitOnePass : Spec.SplitOnePass
+  acceptorExact : Spec.AcceptorExact
+  intDigitLimit : Spec.IntDigitLimit
 
 theorem theVerifiedRoute : VerifiedRoute where
   matchUrlFor t v ha hv := t.match_urlFor ha v hv
@@ -143,5 +150,8 @@ theorem theVerifiedRoute : VerifiedRoute where
   allowUnionOfPartials _ rs method path r allow h :=
     Router.methodNotAllowed_allow_union rs method path r allow h
   notFound _ rs method path policy := Router.notFound_iff rs method path policy
+  splitOnePass := PathTemplate.split_eq_splitFast
+  acceptorExact c := c.acceptor_accepts
+  intDigitLimit := Convertor.int_accepts_iff
 
 end Keel

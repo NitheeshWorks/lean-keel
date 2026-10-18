@@ -176,6 +176,27 @@ the gate (`scripts/Axioms.lean`): only `propext`, `Quot.sound` and
   a method is listed exactly when some partially matching route lists it,
   each once (`Nodup`), in route order.
 * **404 iff no path match.** `Router.notFound_iff : resolve rs method path = .notFound ↔ ∀ r ∈ rs, r.path.match path = none`.
+* **Matching is linear in the path, and is the specification.** Each
+  convertor carries an `Acceptor`, a one-pass automaton for its language
+  (`acceptor_accepts : c.acceptor.accepts t = c.accepts t`); a capture finds
+  all its accepted prefixes in one tail-recursive pass (`Acceptor.cuts`), which
+  stops where the automaton does (`str`, `int`, `float`, `uuid` at the first
+  `/`; `int` past 4300 digits; `uuid` past 37 characters). Compiled code runs
+  `splitFast` by `@[csimp]` on `split_eq_splitFast : split ps s = splitFast ps s`,
+  so every law above, stated on `split`, holds of the code that runs. Recursion
+  depth is the number of template pieces, not the path length.
+  `lake exe bench` times 65535-character non-matching paths for each shape
+  (`/s/{a}/x`, `/p/{a:path}/end`, `/u/{a}-{b}`, and int, float and uuid
+  captures) against a 100 ms bound; each takes a few milliseconds.
+* **`int` takes at most 4300 digits** (CPython's `int_max_str_digits`),
+  checked on the length before any conversion:
+  `Convertor.int_accepts_iff : int.accepts t ↔ t ≠ [] ∧ t.length ≤ maxIntDigits ∧ ∀ c ∈ t, c.isDigit`.
+  So `int.Valid n` is `n < 10 ^ maxIntDigits`, and 1 MiB of digits is
+  rejected after reading 4301 of them.
+* **Long decimals.** `decimal_csimp : decimal = decimalFast` (an accumulator,
+  18 digits per division) and `digitsValue_csimp : digitsValue = digitsValueFast`
+  (digit runs joined pairwise, about log₂ n passes): compiled code is
+  subquadratic and has no recursion depth on the number of digits.
 
 ## Using Keel from a lean-* repo
 

@@ -311,6 +311,24 @@ theorem = ["Keel.PathTemplate.split_sound"]
 test = ["tests/Conformance.lean::PUT /users/tomchristie:disable"]
 
 [[requirement]]
+id = "route.linear"
+upstream = "starlette/routing.py::compile_path"
+title = "Matching is linear in the path: each capture's accepted prefixes are found in one pass of its acceptor; compiled code runs splitFast, proved equal to split"
+status = "implemented"
+realises = ["Keel.PathTemplate.splitFast", "Keel.Acceptor.cuts"]
+theorem = ["Keel.PathTemplate.split_eq_splitFast", "Keel.Codec.decimal_csimp", "Keel.Codec.digitsValue_csimp"]
+test = ["tests/Bench.lean::str, no match"]
+
+[[requirement]]
+id = "route.int_digits"
+upstream = "starlette/convertors.py::IntegerConvertor (CPython int_max_str_digits)"
+title = "An int capture accepts at most 4300 digits, the limit above which CPython's int() refuses to convert"
+status = "implemented"
+realises = ["Keel.Convertor.int", "Keel.Convertor.maxIntDigits"]
+theorem = ["Keel.Convertor.int_accepts_iff"]
+test = ["tests/Conformance.lean::an int capture takes at most 4300 digits"]
+
+[[requirement]]
 id = "route.mount_host"
 upstream = "tests/test_routing.py::test_mount_urls"
 title = "Mount, Host and websocket routes are lean-starlette's; Keel provides the template and dispatch theory they use"

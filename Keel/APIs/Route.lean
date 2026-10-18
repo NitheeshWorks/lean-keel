@@ -123,6 +123,12 @@ theorem path_canonical (t : List Char) : path.Canonical t := by
   have h' : String.ofList t = x := Option.some.inj h
   rw [← h']; show (String.ofList t).toList = t; simp
 
+/-- **`int` accepts at most `maxIntDigits` digits**: CPython's
+`int_max_str_digits`, checked on the text's length before any conversion. -/
+theorem int_accepts_iff (t : List Char) :
+    int.accepts t = true ↔ t ≠ [] ∧ t.length ≤ maxIntDigits ∧ ∀ c ∈ t, c.isDigit = true := by
+  simp [and_assoc]
+
 /-- An `int` text is canonical exactly when it is the shortest decimal of its
 value: no leading zeros. -/
 theorem int_canonical_iff (t : List Char) : int.Canonical t ↔ Codec.decimal (Codec.digitsValue t) = t := by

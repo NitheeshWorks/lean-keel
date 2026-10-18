@@ -28,6 +28,9 @@ lake exe conformance
 echo "== examples =="
 lake exe examples > /dev/null
 
+echo "== bench (routing time on long paths) =="
+lake exe bench
+
 echo "== traceability =="
 python3 scripts/traceability-check.py
 

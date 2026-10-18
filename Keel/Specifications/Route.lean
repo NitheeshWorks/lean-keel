@@ -76,4 +76,16 @@ def NotFoundIff : Prop :=
   ∀ (α : Type) (rs : List (Route α)) (method path : String) (policy : AllowPolicy),
     Router.resolve rs method path policy = .notFound ↔ ∀ r ∈ rs, r.path.match path = none
 
+/-- Compiled code splits a path in one pass per capture (`splitFast`): equal
+to the longest-first specification `split`. -/
+def SplitOnePass : Prop := ∀ ps s, PathTemplate.split ps s = PathTemplate.splitFast ps s
+
+/-- A convertor's acceptor recognises exactly its language. -/
+def AcceptorExact : Prop := ∀ (c : Convertor) (t : List Char), c.acceptor.accepts t = c.accepts t
+
+/-- An `int` capture is at most `maxIntDigits` digits, checked before any
+conversion. -/
+def IntDigitLimit : Prop :=
+  ∀ t, Convertor.int.accepts t = true ↔ t ≠ [] ∧ t.length ≤ Convertor.maxIntDigits ∧ ∀ c ∈ t, c.isDigit = true
+
 end Keel.Spec

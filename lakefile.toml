@@ -1,6 +1,6 @@
 name = "Keel"
 version = "0.1.0"
-defaultTargets = ["Keel", "props", "conformance", "Examples", "examples"]
+defaultTargets = ["Keel", "props", "conformance", "Examples", "examples", "bench"]
 
 # The verified library. Everything under Keel/ except Transport.lean is a
 # total function and the proof surface; see CONTRIBUTING.md.
@@ -30,3 +30,8 @@ roots = ["Examples"]
 name = "examples"
 root = "Examples.Main"
 srcDir = "examples"
+
+# Routing time on long request paths, with bounds: `lake exe bench`.
+[[lean_exe]]
+name = "bench"
+root = "tests.Bench"

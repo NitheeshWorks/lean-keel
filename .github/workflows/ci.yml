@@ -31,6 +31,8 @@ jobs:
         run: lake exe conformance
       - name: Examples
         run: lake exe examples
+      - name: Bench (65535-character paths, 1 MiB of digits, with time bounds)
+        run: lake exe bench
       - name: Traceability
         run: python3 scripts/traceability-check.py
 

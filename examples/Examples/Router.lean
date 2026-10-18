@@ -46,17 +46,19 @@ def describe (policy : AllowPolicy) (method path : String) : String :=
   | .methodNotAllowed _ allow => s!"405 Allow: {", ".intercalate allow}"
   | .notFound => "404"
 
-/-- Every item URL is recognised, with its id. -/
-theorem item_match (n : Nat) : item.match (item.urlFor (n, ())) = some (n, ()) :=
-  item.match_urlFor (by decide) _ ⟨trivial, trivial⟩
+/-- Every item URL is recognised, with its id, for ids of at most
+`maxIntDigits` (4300) digits, the most an `int` capture accepts. -/
+theorem item_match (n : Nat) (hn : n < 10 ^ Convertor.maxIntDigits) :
+    item.match (item.urlFor (n, ())) = some (n, ()) :=
+  item.match_urlFor (by decide) _ ⟨hn, trivial⟩
 
 /-- **`DELETE` on any item is a 405**, whatever the policy: two routes match
 the path, none the method. -/
-theorem delete_item_405 (n : Nat) (policy : AllowPolicy) :
+theorem delete_item_405 (n : Nat) (hn : n < 10 ^ Convertor.maxIntDigits) (policy : AllowPolicy) :
     ∃ r allow, Router.resolve routes "DELETE" (item.urlFor (n, ())) policy = .methodNotAllowed r allow := by
   rw [Router.methodNotAllowed_iff (policy := policy)]
-  have h0 := Route.matches_of_match readItem (method := "DELETE") (item_match n)
-  have h1 := Route.matches_of_match updateItem (method := "DELETE") (item_match n)
+  have h0 := Route.matches_of_match readItem (method := "DELETE") (item_match n hn)
+  have h1 := Route.matches_of_match updateItem (method := "DELETE") (item_match n hn)
   refine ⟨?_, readItem, by simp [routes], by rw [h0]; rfl⟩
   intro r hr
   simp only [routes, List.mem_cons, List.not_mem_nil, or_false] at hr

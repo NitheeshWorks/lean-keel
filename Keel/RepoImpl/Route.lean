@@ -18,6 +18,31 @@ import Keel.DataTypes.Route
 
 namespace Keel
 
+namespace Acceptor
+
+/-- The accepted prefixes of `s`, after reading `pre` (reversed) into state
+`q`: each as its text (reversed) and the rest of `s`, longest first, in front
+of `acc`. One tail-recursive pass, which ends where the automaton stops. -/
+def cuts (a : Acceptor) : a.State → List Char → List Char → List (List Char × List Char) →
+    List (List Char × List Char)
+  | q, pre, [], acc => if a.final q then (pre, []) :: acc else acc
+  | q, pre, c :: cs, acc =>
+    let acc := if a.final q then (pre, c :: cs) :: acc else acc
+    match a.step q c with
+    | none => acc
+    | some q' => a.cuts q' (c :: pre) cs acc
+
+theorem run_append (a : Acceptor) : ∀ (q : a.State) (t u : List Char),
+    a.run q (t ++ u) = (a.run q t).bind (a.run · u)
+  | q, [], u => rfl
+  | q, c :: cs, u => by
+    show (a.step q c).bind (a.run · (cs ++ u)) = ((a.step q c).bind (a.run · cs)).bind (a.run · u)
+    cases a.step q c with
+    | none => rfl
+    | some q' => exact run_append a q' cs u
+
+end Acceptor
+
 namespace PathTemplate
 
 /-- The path that the capture texts spell out, in order of the captures. -/
@@ -50,6 +75,122 @@ def split : List Piece → List Char → Option (List (List Char))
     firstDown (fun k =>
       if c.accepts (s.take k) then (split ps (s.drop k)).map (s.take k :: ·) else none)
       s.length
+
+/-! ## The split in one pass
+
+`split` is the specification: for a capture it tries every prefix length,
+longest first, and tests each prefix afresh, which is quadratic in the path.
+`splitFast` finds all the accepted prefixes in one pass of the convertor's
+`Acceptor` (`Acceptor.cuts`, tail-recursive, stopping where the automaton
+stops: a segment convertor at the first `/`), then tries them longest first.
+`split_eq_splitFast` proves them equal, and `@[csimp]` makes compiled code
+run `splitFast` wherever `split` is called. -/
+
+
+/-- The first `some` among `f n, …, f 0` is the first among `f n, …, f 1`,
+else `f 0`. -/
+theorem firstDown_succ {β : Type} (f : Nat → Option β) :
+    ∀ n, firstDown f (n + 1) = (firstDown (fun k => f (k + 1)) n).or (f 0)
+  | 0 => by
+    show (match f 1 with | some b => some b | none => f 0) = (f 1).or (f 0)
+    cases f 1 <;> rfl
+  | n + 1 => by
+    show (match f (n + 2) with | some b => some b | none => firstDown f (n + 1)) =
+      (match f (n + 2) with | some b => some b | none => firstDown (fun k => f (k + 1)) n).or (f 0)
+    cases f (n + 2) with
+    | some b => rfl
+    | none => exact firstDown_succ f n
+
+theorem firstDown_none {β : Type} {f : Nat → Option β} (h : ∀ k, f k = none) :
+    ∀ n, firstDown f n = none
+  | 0 => h 0
+  | n + 1 => by
+    show (match f (n + 1) with | some b => some b | none => firstDown f n) = none
+    rw [h (n + 1)]; exact firstDown_none h n
+
+theorem findSome?_cons_or {α β : Type} (f : α → Option β) (x : α) (l : List α) :
+    (x :: l).findSome? f = (f x).or (l.findSome? f) := by
+  simp only [List.findSome?]; cases f x <;> rfl
+
+/-- The longest-first search of `split` for one capture, after the text `p`:
+the first prefix `p ++ s.take k`, longest first, that `test` accepts and for
+which `g` succeeds on the text and the rest. -/
+def capSearch {β : Type} (test : List Char → Bool) (g : List Char → List Char → Option β)
+    (p s : List Char) : Option β :=
+  firstDown (fun k => if test (p ++ s.take k) then g (p ++ s.take k) (s.drop k) else none) s.length
+
+theorem capSearch_nil {β : Type} (test : List Char → Bool) (g : List Char → List Char → Option β)
+    (p : List Char) : capSearch test g p [] = if test p then g p [] else none := by
+  simp [capSearch, firstDown]
+
+theorem capSearch_cons {β : Type} (test : List Char → Bool) (g : List Char → List Char → Option β)
+    (p : List Char) (c : Char) (cs : List Char) :
+    capSearch test g p (c :: cs) =
+      (capSearch test g (p ++ [c]) cs).or (if test p then g p (c :: cs) else none) := by
+  simp only [capSearch, List.length_cons]
+  rw [firstDown_succ]
+  simp [List.take_succ_cons, List.drop_succ_cons, List.append_assoc]
+
+/-- The one-pass search agrees with `capSearch`, for an automaton that has
+read `pre` (reversed). -/
+theorem findSome?_cuts {β : Type} (a : Acceptor) (g : List Char → List Char → Option β) :
+    ∀ (s : List Char) (q : a.State) (pre : List Char) (acc : List (List Char × List Char)),
+      a.run a.start pre.reverse = some q →
+      (a.cuts q pre s acc).findSome? (fun x => g x.1.reverse x.2) =
+        (capSearch a.accepts g pre.reverse s).or (acc.findSome? fun x => g x.1.reverse x.2)
+  | [], q, pre, acc, hq => by
+    have hf : a.accepts pre.reverse = a.final q := by simp [Acceptor.accepts, hq, Option.any]
+    simp only [Acceptor.cuts, capSearch_nil, hf]
+    cases a.final q <;> simp [findSome?_cons_or]
+  | c :: cs, q, pre, acc, hq => by
+    have hf : a.accepts pre.reverse = a.final q := by simp [Acceptor.accepts, hq, Option.any]
+    have hacc : (List.findSome? (fun x => g x.1.reverse x.2)
+        (if a.final q then (pre, c :: cs) :: acc else acc)) =
+        (if a.final q then g pre.reverse (c :: cs) else none).or
+          (acc.findSome? fun x => g x.1.reverse x.2) := by
+      cases a.final q <;> simp [findSome?_cons_or]
+    rw [capSearch_cons, hf, Option.or_assoc, ← hacc]
+    simp only [Acceptor.cuts]
+    have hrun : a.run a.start (pre.reverse ++ [c]) = a.step q c := by
+      rw [Acceptor.run_append, hq]
+      show (a.step q c).bind (a.run · []) = a.step q c
+      cases a.step q c <;> rfl
+    cases hs : a.step q c with
+    | none =>
+      have hdead : capSearch a.accepts g (pre.reverse ++ [c]) cs = none := by
+        apply firstDown_none
+        intro k
+        have : a.accepts (pre.reverse ++ [c] ++ cs.take k) = false := by
+          simp only [Acceptor.accepts]
+          rw [Acceptor.run_append, hrun, hs]; rfl
+        simp only [this]; rfl
+      simp [hdead]
+    | some q' =>
+      have hq' : a.run a.start (c :: pre).reverse = some q' := by
+        rw [List.reverse_cons, hrun, hs]
+      rw [findSome?_cuts a g cs q' (c :: pre) _ hq', List.reverse_cons]
+
+/-- `split`, finding each capture's accepted prefixes in one pass. -/
+def splitFast : List Piece → List Char → Option (List (List Char))
+  | [], s => if s = [] then some [] else none
+  | .lit l :: ps, s => if l <+: s then splitFast ps (s.drop l.length) else none
+  | .cap _ c :: ps, s =>
+    (c.acceptor.cuts c.acceptor.start [] s []).findSome? fun x =>
+      (splitFast ps x.2).map (x.1.reverse :: ·)
+
+theorem split_eq_splitFast : ∀ (ps : List Piece) (s : List Char), split ps s = splitFast ps s
+  | [], s => rfl
+  | .lit l :: ps, s => by
+    simp only [split, splitFast, split_eq_splitFast ps]
+  | .cap _ c :: ps, s => by
+    have hacc : c.acceptor.accepts = c.accepts := funext c.acceptor_accepts
+    have h := findSome?_cuts c.acceptor (fun t r => (splitFast ps r).map (t :: ·)) s
+      c.acceptor.start [] [] rfl
+    simp only [List.reverse_nil, List.findSome?_nil, Option.or_none, hacc] at h
+    simp only [split, splitFast, h, capSearch, List.nil_append, split_eq_splitFast ps]
+
+@[csimp] theorem split_csimp : @split = @splitFast :=
+  funext fun ps => funext fun s => split_eq_splitFast ps s
 
 /-- Convert the capture texts, in order. -/
 def convert : (ps : List Piece) → List (List Char) → Option (Args ps)

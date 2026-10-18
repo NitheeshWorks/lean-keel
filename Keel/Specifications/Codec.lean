@@ -94,4 +94,10 @@ def NatLawful : Prop :=
 def NatBELawful : Prop :=
   ∀ (w n : Nat) (r : List UInt8), n < 256 ^ w → (natBE w).decode (beBytes w n ++ r) = some (n, r)
 
+/-- Compiled code renders decimals by `decimalFast`: equal to `decimal`. -/
+def DecimalFast : Prop := Codec.decimal = Codec.decimalFast
+
+/-- Compiled code reads digits by `digitsValueFast`: equal to `digitsValue`. -/
+def DigitsValueFast : Prop := Codec.digitsValue = Codec.digitsValueFast
+
 end Keel.Spec

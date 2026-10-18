@@ -24,6 +24,23 @@ namespace Convertor
 
 /-! ## str and path -/
 
+/-- The `str` recogniser: whether anything was read; stops at `/`. -/
+@[reducible] def strAcceptor : Acceptor where
+  State := Bool
+  start := false
+  step _ c := if c = '/' then none else some true
+  final b := b
+
+theorem strAcceptor_run : ∀ (b : Bool) (t : List Char),
+    strAcceptor.run b t = if '/' ∈ t then none else some (b || !t.isEmpty)
+  | b, [] => by simp [Acceptor.run]
+  | b, c :: cs => by
+    show ((if c = '/' then none else some true).bind fun b => strAcceptor.run b cs) = _
+    by_cases hc : c = '/'
+    · simp [hc]
+    · simp only [hc, ite_false, Option.bind_some, strAcceptor_run true cs]
+      simp [hc, eq_comm (a := '/')]
+
 /-- `str`: one non-empty path segment. -/
 @[reducible] def str : Convertor where
   name := "str"
@@ -36,6 +53,23 @@ namespace Convertor
   parse_render s _ := by simp
   segment := true
   segment_spec _ t h := (by simpa using h : t ≠ [] ∧ '/' ∉ t).2
+  acceptor := strAcceptor
+  acceptor_accepts t := by
+    simp only [Acceptor.accepts, strAcceptor_run]
+    by_cases h : '/' ∈ t
+    · simp [h, Option.any]
+    · cases t <;> simp_all [Option.any]
+
+/-- The `path` recogniser: every text. -/
+@[reducible] def pathAcceptor : Acceptor where
+  State := Unit
+  start := ()
+  step _ _ := some ()
+  final _ := true
+
+theorem pathAcceptor_run : ∀ t, pathAcceptor.run () t = some ()
+  | [] => rfl
+  | _ :: cs => pathAcceptor_run cs
 
 /-- `path`: any text, `/` included. -/
 @[reducible] def path : Convertor where
@@ -49,26 +83,87 @@ namespace Convertor
   parse_render s _ := by simp
   segment := false
   segment_spec h := by cases h
+  acceptor := pathAcceptor
+  acceptor_accepts t := by simp [Acceptor.accepts, pathAcceptor_run, Option.any]
 
 /-! ## int -/
 
-/-- `int`: decimal digits, as a natural number. Leading zeros are accepted
-(`007` is `7`) and never rendered. -/
+/-- The most digits `int` accepts: CPython's default `sys.int_max_str_digits`,
+above which `int(text)` refuses to convert. The bound is checked before any
+conversion, as the length of the text. -/
+def maxIntDigits : Nat := 4300
+
+/-- The `int` recogniser: the number of digits read; stops at a non-digit or
+past `maxIntDigits`. -/
+@[reducible] def intAcceptor : Acceptor where
+  State := Nat
+  start := 0
+  step k c := if c.isDigit = true ∧ k < maxIntDigits then some (k + 1) else none
+  final k := decide (0 < k)
+
+theorem intAcceptor_run : ∀ (k : Nat) (t : List Char), k ≤ maxIntDigits →
+    intAcceptor.run k t =
+      if t.all Char.isDigit = true ∧ k + t.length ≤ maxIntDigits then some (k + t.length) else none
+  | k, [], hk => by simp [Acceptor.run, hk]
+  | k, c :: cs, hk => by
+    show ((if c.isDigit = true ∧ k < maxIntDigits then some (k + 1) else none).bind
+      fun k => intAcceptor.run k cs) = _
+    by_cases hc : c.isDigit = true ∧ k < maxIntDigits
+    · rw [ite_eq_left hc, Option.bind_some, intAcceptor_run (k + 1) cs (by omega)]
+      simp only [List.all_cons, hc.1, Bool.true_and, List.length_cons]
+      by_cases h2 : cs.all Char.isDigit = true ∧ k + 1 + cs.length ≤ maxIntDigits
+      · rw [ite_eq_left h2, ite_eq_left ⟨h2.1, by omega⟩]; congr 1; omega
+      · rw [ite_eq_right h2, ite_eq_right (fun h => h2 ⟨h.1, by omega⟩)]
+    · rw [ite_eq_right hc, Option.bind_none, ite_eq_right]
+      simp only [List.all_cons, Bool.and_eq_true, List.length_cons]
+      intro h; exact hc ⟨h.1.1, by omega⟩
+
+theorem decimal_length_le : ∀ (n k : Nat), n < 10 ^ k → 0 < k → (Codec.decimal n).length ≤ k := by
+  intro n
+  induction n using Nat.strongRecOn with
+  | ind n ih =>
+    intro k hn hk
+    rw [Codec.decimal]
+    split
+    · simp; omega
+    · obtain ⟨j, rfl⟩ : ∃ j, k = j + 1 := ⟨k - 1, by omega⟩
+      have hj : 0 < j := by
+        rcases Nat.eq_zero_or_pos j with h | h
+        · subst h; simp at hn; omega
+        · exact h
+      have : n / 10 < 10 ^ j := by
+        rw [Nat.div_lt_iff_lt_mul (by omega)]; rwa [Nat.pow_succ] at hn
+      simpa using ih (n / 10) (by omega) j this hj
+
+/-- `int`: up to `maxIntDigits` decimal digits, as a natural number. Leading
+zeros are accepted (`007` is `7`) and never rendered. -/
 @[reducible] def int : Convertor where
   name := "int"
   Val := Nat
-  accepts t := !t.isEmpty && t.all Char.isDigit
+  accepts t := !t.isEmpty && decide (t.length ≤ maxIntDigits) && t.all Char.isDigit
   parse t := some (Codec.digitsValue t)
   render := Codec.decimal
-  Valid _ := True
-  accepts_render n _ := by
-    simp only [Bool.and_eq_true, Bool.not_eq_true', List.isEmpty_eq_false_iff, List.all_eq_true]
-    exact ⟨Codec.decimal_ne_nil n, Codec.decimal_isDigit n⟩
+  Valid n := n < 10 ^ maxIntDigits
+  accepts_render n h := by
+    simp only [Bool.and_eq_true, Bool.not_eq_true', List.isEmpty_eq_false_iff, List.all_eq_true,
+      decide_eq_true_eq]
+    exact ⟨⟨Codec.decimal_ne_nil n, decimal_length_le n _ h (by decide)⟩, Codec.decimal_isDigit n⟩
   parse_render n _ := by simp [Codec.digitsValue_decimal]
   segment := true
   segment_spec _ t h hs := by
     simp only [Bool.and_eq_true, List.all_eq_true] at h
     exact absurd (h.2 '/' hs) (by decide)
+  acceptor := intAcceptor
+  acceptor_accepts t := by
+    simp only [Acceptor.accepts, intAcceptor_run 0 t (Nat.zero_le _), Nat.zero_add]
+    by_cases h : t.all Char.isDigit = true ∧ t.length ≤ maxIntDigits
+    · rw [ite_eq_left h]; cases t <;> simp_all [Option.any]
+    · rw [ite_eq_right h]
+      simp only [Option.any]
+      by_cases ha : t.all Char.isDigit = true
+      · have : ¬ t.length ≤ maxIntDigits := fun h' => h ⟨ha, h'⟩
+        simp [this]
+      · simp only [Bool.not_eq_true] at ha; simp [ha]
 
 /-! ## float -/
 
@@ -126,6 +221,90 @@ theorem dropWhile_digits_append {w r : List Char} (hw : ∀ c ∈ w, c.isDigit =
 def renderFixed (f : Fixed) : List Char :=
   Codec.decimal f.whole ++ (if f.frac = [] then [] else '.' :: f.frac)
 
+/-- Where the `float` recogniser is in `[0-9]+(\.[0-9]+)?`. -/
+inductive FloatState where
+  | start | whole | dot | frac
+
+/-- The `float` recogniser. -/
+@[reducible] def floatAcceptor : Acceptor where
+  State := FloatState
+  start := .start
+  step
+    | .start, c => if c.isDigit then some .whole else none
+    | .whole, c => if c.isDigit then some .whole else if c = '.' then some .dot else none
+    | .dot, c => if c.isDigit then some .frac else none
+    | .frac, c => if c.isDigit then some .frac else none
+  final
+    | .whole | .frac => true
+    | _ => false
+
+theorem floatAcceptor_frac : ∀ t, floatAcceptor.run .frac t =
+    if t.all Char.isDigit then some .frac else none
+  | [] => rfl
+  | c :: cs => by
+    show ((if c.isDigit then some FloatState.frac else none).bind (floatAcceptor.run · cs)) = _
+    cases hc : c.isDigit <;> simp [floatAcceptor_frac cs, hc]
+
+theorem floatAcceptor_dot (t : List Char) : floatAcceptor.run .dot t =
+    match t with
+    | [] => some .dot
+    | c :: cs => if c.isDigit then floatAcceptor.run .frac cs else none := by
+  cases t with
+  | nil => rfl
+  | cons c cs =>
+    show ((if c.isDigit then some FloatState.frac else none).bind (floatAcceptor.run · cs)) =
+      if c.isDigit then floatAcceptor.run .frac cs else none
+    cases c.isDigit <;> rfl
+
+theorem floatAcceptor_whole : ∀ t, floatAcceptor.run .whole t =
+    match t.dropWhile Char.isDigit with
+    | [] => some .whole
+    | c :: cs => if c = '.' then floatAcceptor.run .dot cs else none
+  | [] => rfl
+  | c :: cs => by
+    show ((if c.isDigit then some FloatState.whole else if c = '.' then some .dot else none).bind
+      (floatAcceptor.run · cs)) = _
+    cases hc : c.isDigit
+    · have : (c :: cs).dropWhile Char.isDigit = c :: cs := by simp [hc]
+      rw [this]
+      by_cases hd : c = '.' <;> simp [hd]
+    · have : (c :: cs).dropWhile Char.isDigit = cs.dropWhile Char.isDigit := by
+        simp [hc]
+      rw [this, ite_eq_left rfl, Option.bind_some, floatAcceptor_whole cs]
+
+theorem floatAcceptor_accepts (t : List Char) : floatAcceptor.accepts t = floatShape t := by
+  cases t with
+  | nil => rfl
+  | cons c cs =>
+    simp only [Acceptor.accepts, floatShape]
+    show ((if c.isDigit then some FloatState.whole else none).bind
+      (floatAcceptor.run · cs)).any floatAcceptor.final = _
+    cases hc : c.isDigit
+    · simp [hc, Option.any]
+    · have hw : (c :: cs).takeWhile Char.isDigit = c :: cs.takeWhile Char.isDigit := by
+        simp [hc]
+      have hd : (c :: cs).dropWhile Char.isDigit = cs.dropWhile Char.isDigit := by
+        simp [hc]
+      rw [ite_eq_left rfl, Option.bind_some, floatAcceptor_whole cs, hw, hd]
+      simp only [List.isEmpty_cons, Bool.not_false, Bool.true_and]
+      cases cs.dropWhile Char.isDigit with
+      | nil => rfl
+      | cons d ds =>
+        by_cases hdot : d = '.'
+        · subst hdot
+          dsimp only
+          rw [ite_eq_left rfl, floatAcceptor_dot]
+          cases ds with
+          | nil => rfl
+          | cons e es =>
+            cases he : e.isDigit
+            · simp [he, Option.any]
+            · simp only [he, ite_true, floatAcceptor_frac]
+              cases ha : es.all Char.isDigit <;> simp [he, ha, Option.any]
+        · dsimp only
+          rw [ite_eq_right hdot]
+          simp [hdot, Option.any]
+
 /-- `float`: `[0-9]+(\.[0-9]+)?`, as an exact decimal. -/
 @[reducible] def float : Convertor where
   name := "float"
@@ -181,6 +360,8 @@ def renderFixed (f : Fixed) : List Char :=
           rcases List.mem_cons.1 hs with hs | hs
           · exact absurd (hs.trans hh) (by decide)
           · exact absurd (hall '/' hs) (by decide)
+  acceptor := floatAcceptor
+  acceptor_accepts := floatAcceptor_accepts
 
 /-! ## uuid -/
 
@@ -313,6 +494,38 @@ theorem map_lowerHex {g : List Char} (h : ∀ c ∈ g, isLowerHex c = true) : g.
   conv => rhs; rw [← List.map_id g]
   exact List.map_congr_left fun c hc => lowerHex_of_lower (h c hc)
 
+theorem hexGroups_length : ∀ (ns : List Nat) (t : List Char), hexGroups ns t = true →
+    t.length ≤ ns.sum + ns.length
+  | [], t, h => by simp [hexGroups] at h; simp [h]
+  | n :: ns, t, h => by
+    simp only [hexGroups, Bool.and_eq_true, beq_iff_eq] at h
+    obtain ⟨⟨hn, _⟩, hrest⟩ := h
+    have ht := List.take_append_drop n t
+    have hlen : t.length = (t.take n).length + (t.drop n).length := by
+      rw [← List.length_append, ht]
+    revert hrest
+    cases hd : t.drop n with
+    | nil => intro _; simp [hd] at hlen; simp; omega
+    | cons x r =>
+      intro hrest
+      rw [hd] at hlen
+      by_cases hx : x = '-'
+      · subst hx
+        simp only [Bool.and_eq_true] at hrest
+        have := hexGroups_length ns r hrest.2
+        simp at hlen ⊢; omega
+      · have hrest' : hexGroups ns (x :: r) = true := by
+          revert hrest; split
+          · rename_i r' heq; simp at heq; exact absurd heq.1 hx
+          · exact id
+        have := hexGroups_length ns (x :: r) hrest'
+        simp at hlen this ⊢; omega
+
+/-- A UUID text has at most 37 characters (32 digits, at most 5 hyphens): the
+`uuid` recogniser stops there. -/
+theorem uuidShape_length {t : List Char} (h : uuidShape t = true) : t.length ≤ 37 :=
+  hexGroups_length _ t h
+
 /-- `uuid`: the UUID shape, either case, hyphens optional; rendered lower case
 and hyphenated. -/
 @[reducible] def uuid : Convertor where
@@ -366,6 +579,8 @@ and hyphenated. -/
     rcases hexGroups_char _ t h '/' hs with h' | h'
     · exact ne_slash_of_isHex h' rfl
     · cases h'
+  acceptor := Acceptor.ofBounded uuidShape 37
+  acceptor_accepts := Acceptor.ofBounded_accepts _ _ fun _ h => uuidShape_length h
 
 /-- The built-in convertors, by name (starlette's `CONVERTOR_TYPES`). -/
 def builtin : List Convertor := [str, path, int, float, uuid]
