@@ -7,7 +7,7 @@ code changes.
 
 ## Architecture
 
-Four theories, each one module that downstream repos import:
+Five theories, each one module that downstream repos import:
 
 | Module | DataTypes | RepoImpl | Proofs | APIs |
 |---|---|---|---|---|
@@ -15,6 +15,7 @@ Four theories, each one module that downstream repos import:
 | `Keel.Codec` | `Codec.lean` (`Codec`, `Incomparable`, `Avoids`) | `Codec.lean` (combinators, each proving its law), `CodecBasic.lean` (`nat`, `natBE`, `string`, `bytes`) | `Codec.lean` (`*_lawful`, simp lemmas for side conditions) | `Codec.lean` (bytes and strings, `Literal`, `Codable`) |
 | `Keel.Refine` | `Refine.lean` (`Constraint`, classes, `Loc`, `Located`, `Refine.Error`) | `Refine.lean` (`holds`, decision, `validate`, `Validator`, `α ∣ c` notation) | `Refine.lean` | `Refine.lean` (`refine`, `Validator.ofConstraint`) |
 | `Keel.Route` | `Route.lean` (`Convertor`, `Piece`, `PathTemplate`, `Args`, `Match`, `Outcome`, `Route`) | `Route.lean` (`split`, `match`, `urlFor`, `dispatch`, `Router.resolve`), `Convertors.lean` | `Route.lean` | `Route.lean` (`compile`, `path%`, canonical texts) |
+| `Keel.Regex` | `Regex.lean` (`CharClass`, `Regex`, `Regex.Cls`, `Assertion`, `Mode`) | `Regex.lean` (`Matches`, `Accepts`, `pd`, `PD`, `scan`, `accepts`), `RegexNfa.lean` (`Nfa`, `build`, `Cache`, `crun`) | `Regex.lean` | `Regex.lean` (`Matcher`, `compile`) |
 
 `Specifications/<Theory>.lean` states each headline law as a `Prop`, and
 `Proofs/Verified.lean` has one `Verified<Theory>` structure per theory whose

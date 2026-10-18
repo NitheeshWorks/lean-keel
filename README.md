@@ -13,6 +13,7 @@ re-proved case by case.
 | `Keel.Codec` | lawful encoder/decoder pairs, closed under combinators | `c.decode (c.encode a ++ rest) = some (a, rest)` |
 | `Keel.Refine` | constraint language, refinement types `α ∣ c`, located validation | `c.validate x = .ok x ↔ c.holds x` |
 | `Keel.Route` | typed path templates, first-match dispatch, 405 and 404 | `t.match (t.urlFor v) = some v` |
+| `Keel.Regex` | regular expressions over any character classes, matched by derivatives in linear time, compiled once | `(r.compile m).test s ↔ Accepts m r s.toList` |
 
 ## Quickstart
 
@@ -81,6 +82,7 @@ examples` runs them all):
 | `NestedLists` | `Keel.Parse` | a recursive parser with `fixDepth`; `tree_ok` (agrees with `fix` whenever it succeeds); 10^6 nesting fails with `depthExceeded` |
 | `Offer` | `Keel.Refine` | STYLE.md's `Offer`, a literal default, validation with errors located under each field (`validate_errors_located`) |
 | `Router` | `Keel.Route` | a router with a typed capture, both `Allow` policies, and `DELETE` on any item proved a 405 |
+| `OriginRegex` | `Keel.Regex` | an `allow_origin_regex`-style allow-list in a three-atom dialect; fullmatch refuses `https://evil.com/?https://a.example.org`, search accepts it |
 
 ## What is proved
 
@@ -197,6 +199,39 @@ the gate (`scripts/Axioms.lean`): only `propext`, `Quot.sound` and
   18 digits per division) and `digitsValue_csimp : digitsValue = digitsValueFast`
   (digit runs joined pairwise, about log₂ n passes): compiled code is
   subquadratic and has no recursion depth on the number of digits.
+
+### Keel.Regex
+
+A shared matcher for every dialect: a dialect parser produces `Regex κ`,
+where `κ` is its character classes (`CharClass κ`: membership and word
+characters; `Regex.Cls α` closes atoms under union, intersection,
+difference, symmetric difference and negation). It imports only Init and
+Std (`import Keel.Regex` peaks at 0.51 GB).
+
+* **Meaning.** `Matches r p u n`: `r` matches `u` between the characters `p`
+  and `n`, so `^`, `$`, `\b`, `\B`, `\<`, `\>` read their context.
+  `Accepts m r t`: `r` matches a segment of `t` that the mode allows
+  (`Mode.search`, Rust's `is_match` and `re.search`; `Mode.prefix`,
+  `re.match`; `Mode.full`, `re.fullmatch`).
+* **Derivatives.** `nullable_iff`; `derive_correct : Matches r p (c :: u) n ↔ ∃ q ∈ pd p c r, Matches q (some c) u n`
+  (Antimirov's theorem, in context).
+* **The scan decides acceptance**, in every mode:
+  `accepts_iff : r.accepts m t = true ↔ Accepts m r t`.
+* **No backtracking.** Every state of the scan is `r` and its partial
+  derivatives without repeats: `reach_next`, and
+  `reach_length_le : Reach r T → T.length ≤ r.leaves + 1`, so the work per
+  character is bounded by the pattern.
+* **Compiled once.** `Nfa.build` numbers the pattern and `PD r` and tables
+  each term's linear form per context slot, checking the tables (they are
+  fields of `Nfa`); `Nfa.crun` caches steps per call. `Nfa.accepts_eq : N.accepts m t = r.accepts m t`,
+  and `compile_test_iff : (r.compile m).test s = true ↔ Accepts m r s.toList`.
+  `accepts_full_iff`: in `Mode.full`, `Matches r none t none`.
+* **Measured against lean-pydantic's own matcher**, which this generalises
+  (its bench, run on a scratch build at lean-pydantic 94d8811, medians of six
+  interleaved runs): the matching benches are within 10% or faster
+  (`[ab]*a[ab]{100}c` on 20 000 characters 55 ms against 67 ms); compiling
+  a pattern is about 10% slower (163 ms against 150 ms for
+  `(\w{1,30}\s?){1,20}x`).
 
 ## Using Keel from a lean-* repo
 

@@ -29,7 +29,7 @@ namespace Regex
 variable {κ : Type} [CharClass κ] [DecidableEq κ] [Hashable κ]
 
 /-- **Compile a pattern** for a mode (the default: anywhere in the text). -/
-def compile (r : Regex κ) (m : Mode := .search) : Matcher κ :=
+@[specialize] def compile (r : Regex κ) (m : Mode := .search) : Matcher κ :=
   match Nfa.build r with
   | some N => ⟨r, m, N.accepts m, N.accepts_eq m⟩
   | none => ⟨r, m, r.accepts m, fun _ => rfl⟩

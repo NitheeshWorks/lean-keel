@@ -14,7 +14,7 @@ parsing, refinement and validation, and routing. Each states its laws once;
 every lean-* repo instantiates them.
 
 Each theory is one module (`Keel.Parse`, `Keel.Codec`, `Keel.Refine`,
-`Keel.Route`), layered bottom to top (each layer imports only those below):
+`Keel.Route`, `Keel.Regex`), layered bottom to top (each layer imports only those below):
 
 * `DataTypes/`      structures and inductives; invariants are fields
 * `RepoImpl/`       the executable definitions; total

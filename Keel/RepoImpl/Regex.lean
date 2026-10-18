@@ -97,7 +97,7 @@ def nullable (p n : Option Char) : Regex κ → Bool
   | star _ => true
 
 /-- Concatenation, dropping a leading `eps`. -/
-def seq [DecidableEq κ] (r s : Regex κ) : Regex κ := if r = eps then s else cat r s
+@[specialize] def seq [DecidableEq κ] (r s : Regex κ) : Regex κ := if r = eps then s else cat r s
 
 variable [DecidableEq κ]
 

@@ -46,6 +46,7 @@ variable {κ : Type} [CharClass κ] [DecidableEq κ]
 
 
 /-- `nullable`, on the two sides' bits. -/
+@[specialize]
 def nullB (pc nc : Bool × Bool) : Regex κ → Bool
   | empty => false
   | eps => true
@@ -64,6 +65,7 @@ theorem nullable_eq (p n : Option Char) : ∀ r : Regex κ, nullable p n r = nul
 /-- Antimirov's linear form, in context: the derivatives of `r` by a
 character with their guarding class, when the character before has bits
 `pc` and the character read is a word character exactly when `nw`. -/
+@[specialize]
 def lin (pc : Bool × Bool) (nw : Bool) : Regex κ → List (κ × Regex κ)
   | empty => []
   | eps => []
@@ -224,6 +226,7 @@ def next (pc : Bool × Bool) (c : Char) (S : List Nat) : List Nat :=
 
 /-- `addEdge` over the edges from `i` on, with the flags and the set as
 separate arguments so the flag array is updated in place. -/
+@[specialize]
 def edgeLoop (es : Array (κ × Nat)) (c : Char) (i : Nat) (seen : Array Bool) (acc : List Nat) :
     Array Bool × List Nat :=
   if h : i < es.size then
@@ -255,12 +258,14 @@ termination_by es.size - i
 
 /-- `next`'s work in one pass: every live term's edges, into a seen-flag
 array and the new set. -/
+@[specialize]
 def stepGo (pc : Bool × Bool) (nw : Bool) (c : Char) : List Nat → Array Bool × List Nat → Array Bool × List Nat
   | [], sa => sa
   | j :: S, (seen, acc) =>
     stepGo pc nw c S (if j < N.terms.size then edgeLoop (N.edges j pc nw) c 0 seen acc else (seen, acc))
 
 /-- `next`, with no intermediate lists (`nextFast_mem`). -/
+@[specialize]
 def nextFast (pc : Bool × Bool) (c : Char) (S : List Nat) : List Nat :=
   (N.stepGo pc (CharClass.word κ c) c S
     (if m.anchorStart then (Array.replicate N.terms.size false, [])
@@ -390,11 +395,14 @@ theorem nextFast_mem (pc : Bool × Bool) (c : Char) (S : List Nat) (x : Nat) :
       · split at hy <;> simp at hy
 
 /-- The scan over term numbers. -/
+@[specialize]
 def run : Option Char → List Char → List Nat → Bool
   | p, [], S => S.any (N.finAt · (ctx κ p))
   | p, c :: cs, S =>
-    if !m.anchorEnd && S.any (N.nulAt · (ctx κ p) (CharClass.word κ c)) then true
-    else run (some c) cs (N.nextFast m (ctx κ p) c S)
+    let pc := ctx κ p
+    let nw := CharClass.word κ c
+    if !m.anchorEnd && S.any (N.nulAt · pc nw) then true
+    else run (some c) cs (N.nextFast m pc c S)
 
 /-! ### Caching the steps of one call
 
@@ -511,6 +519,7 @@ def record (d : Cache N m) (i : Nat) (pc : Bool × Bool) (c : Char) (j : Nat) (S
     · exact d.good i' b₁ b₂ c' acc j' h
 
 /-- The step from set `i` (`S`) by `c`, computed and recorded. -/
+@[specialize]
 def advance (d : Cache N m) (i : Nat) (pc : Bool × Bool) (c : Char) (S : List Nat) (hS : d.states[i]? = some S) :
     Cache N m × Nat :=
   let S' := N.nextFast m pc c S
@@ -525,6 +534,7 @@ theorem advance_spec (d : Cache N m) (i : Nat) (pc : Bool × Bool) (c : Char) (S
 end Cache
 
 /-- `run`, through the cache. -/
+@[specialize]
 def crun (d : Cache N m) (i : Nat) (p : Option Char) : List Char → Bool
   | [] => (d.states[i]?.getD []).any (N.finAt · (ctx κ p))
   | c :: cs =>
@@ -535,7 +545,8 @@ def crun (d : Cache N m) (i : Nat) (p : Option Char) : List Char → Bool
       match hS : d.states[i]? with
       | none => false
       | some S =>
-        if !m.anchorEnd && S.any (N.nulAt · pc (CharClass.word κ c)) then true
+        let nw := CharClass.word κ c
+        if !m.anchorEnd && S.any (N.nulAt · pc nw) then true
         else if d.states.size < maxStates then
           let a := d.advance i pc c S hS
           crun a.1 a.2 (some c) cs
@@ -573,6 +584,7 @@ def cacheFrom : Nat := 256
 
 /-- Whether the pattern matches `t` where the mode allows: the scan over
 term numbers, through the cache on longer texts. -/
+@[specialize]
 def accepts (t : List Char) : Bool :=
   if t.length ≤ cacheFrom then N.run m none t [0]
   else N.crun m (Cache.start [0]) 0 none t
@@ -596,10 +608,12 @@ theorem mem_combos (pc : Bool × Bool) (nw : Bool) : (pc, nw) ∈ combos := by
   rw [← decode_code pc nw]; exact List.mem_map.2 ⟨_, List.mem_range.2 (code_lt pc nw), rfl⟩
 
 /-- Number `q`, adding it if it is new. -/
+@[specialize]
 def intern (st : Array (Regex κ) × Std.HashMap (Regex κ) Nat) (q : Regex κ) : Array (Regex κ) × Std.HashMap (Regex κ) Nat :=
   if st.2.contains q then st else (st.1.push q, st.2.insert q st.1.size)
 
 /-- No assertion but `$` inside: then the context never matters. -/
+@[specialize]
 def ctxFree : Regex κ → Bool
   | assert .finish => true
   | assert _ => false
@@ -633,20 +647,25 @@ theorem lin_ctxFree (pc : Bool × Bool) (nw : Bool) :
     simp only [lin, lin_ctxFree pc nw r h]
 
 /-- The slots whose linear forms differ: one when the context never matters. -/
+@[specialize]
 def slots (t : Regex κ) : List ((Bool × Bool) × Bool) := if ctxFree t then [((false, false), false)] else combos
 
-/-- The pattern and its partial derivatives `PD r`, numbered, the pattern
-first. Every derivative of a numbered term is numbered (`PD` is closed under
-derivation), and `build` checks it. -/
+/-- The pattern and its partial derivatives `PD r` (at most one per character
+class), numbered, the pattern first. Every derivative of a numbered term is
+numbered, since `PD` is closed under derivation (`PD_closed`); `build` checks
+it in any case. No search, so nothing to bound. -/
+@[specialize]
 def numberTerms (r : Regex κ) : Array (Regex κ) × Std.HashMap (Regex κ) Nat :=
   (PD r).foldl intern (#[r], (∅ : Std.HashMap (Regex κ) Nat).insert r 0)
 
 /-- A linear form with the derivatives as numbers. -/
+@[specialize]
 def numbered (idx : Std.HashMap (Regex κ) Nat) (l : List (κ × Regex κ)) : Array (κ × Nat) :=
   (l.map fun kq => (kq.1, idx.getD kq.2 0)).toArray
 
 /-- A term's table row: its linear form in each slot, with the derivatives
 as numbers (computed once when the context never matters). -/
+@[specialize]
 def transRow (idx : Std.HashMap (Regex κ) Nat) (t : Regex κ) : Array (Array (κ × Nat)) :=
   if ctxFree t then
     let e := numbered idx (lin (false, false) false t)
@@ -663,6 +682,7 @@ theorem transRow_get (idx : Std.HashMap (Regex κ) Nat) (t : Regex κ) (pc : Boo
   · simp [hk, decode_code]
 
 /-- A term's nullability before a character, in each slot. -/
+@[specialize]
 def nulRow (t : Regex κ) : Array Bool :=
   if ctxFree t then
     let b := nullB (false, false) (false, false) t
@@ -679,6 +699,7 @@ theorem nulRow_get (t : Regex κ) (pc : Bool × Bool) (nw : Bool) :
   · simp [hk, decode_code]
 
 /-- A term's nullability at the end, in each slot. -/
+@[specialize]
 def finRow (t : Regex κ) : Array Bool :=
   if ctxFree t then
     let b := nullB (false, false) (true, false) t
@@ -695,6 +716,7 @@ theorem finRow_get (t : Regex κ) (pc : Bool × Bool) :
   · simp [hk, decode_code]
 
 /-- Every derivative of `t` was numbered, and its number stands for it. -/
+@[specialize]
 def checkTerm (terms : Array (Regex κ)) (idx : Std.HashMap (Regex κ) Nat) (t : Regex κ) : Bool :=
   (slots t).all fun pn => (lin pn.1 pn.2 t).all fun kq => decide (terms[idx.getD kq.2 0]? = some kq.2)
 
@@ -719,6 +741,7 @@ theorem range8_get {k : Nat} (h : k < 8) : (Array.range 8)[k]? = some k := by
 
 /-- Compile `r`: number its derivative terms and fill the tables, checking
 the numbering (`none` if it were incomplete, and then the plain scan runs). -/
+@[specialize]
 def Nfa.build (r : Regex κ) : Option (Nfa r) :=
   let st := numberTerms r
   let terms := st.1

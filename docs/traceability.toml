@@ -399,3 +399,30 @@ title = "One worked example per theory, each stating the laws it inherits"
 status = "implemented"
 realises = ["Keel.Route.matches_of_match", "Keel.Codec.avoids_cons_of_not_mem"]
 test = ["examples/MANIFEST.toml", "examples/Examples/HeaderCodec.lean", "examples/Examples/NestedLists.lean", "examples/Examples/Offer.lean", "examples/Examples/Router.lean"]
+
+[[requirement]]
+id = "regex.semantics"
+upstream = "pydantic-core regex (Rust regex crate) and Python re, through their dialect parsers"
+title = "Regular expressions over any character classes, with zero-width assertions read in context; matches in search, prefix or full mode"
+status = "implemented"
+realises = ["Keel.Regex", "Keel.CharClass", "Keel.Regex.Matches", "Keel.Regex.Accepts", "Keel.Regex.Mode"]
+theorem = ["Keel.Regex.nullable_iff", "Keel.Regex.accepts_full_iff"]
+test = ["examples/Examples/OriginRegex.lean"]
+
+[[requirement]]
+id = "regex.derivatives"
+upstream = "pydantic-core regex (Rust regex crate)"
+title = "Matching by Antimirov partial derivatives with no backtracking: the scan decides acceptance, and its state is bounded by the pattern"
+status = "implemented"
+realises = ["Keel.Regex.pd", "Keel.Regex.scan", "Keel.Regex.accepts"]
+theorem = ["Keel.Regex.derive_correct", "Keel.Regex.accepts_iff", "Keel.Regex.reach_length_le", "Keel.Regex.reach_next"]
+test = ["examples/Examples/OriginRegex.lean"]
+
+[[requirement]]
+id = "regex.compiled"
+upstream = "pydantic-core regex (Rust regex crate)"
+title = "A pattern compiles once to numbered linear-form tables with a per-call step cache; the compiled matcher is the scan"
+status = "implemented"
+realises = ["Keel.Regex.Nfa.build", "Keel.Regex.Nfa.accepts", "Keel.Regex.compile", "Keel.Regex.Matcher"]
+theorem = ["Keel.Regex.Nfa.accepts_eq", "Keel.Regex.Nfa.crun_eq", "Keel.Regex.compile_test_iff"]
+test = ["examples/Examples/OriginRegex.lean"]
