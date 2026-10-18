@@ -3,9 +3,16 @@
 # Built by `lake build`, gated by `scripts/Axioms.lean Examples`, and run by
 # `lake exe examples` in scripts/check.sh and CI.
 
+[meta]
+upstream = "none"
+# The library root (imports every example) and the runner for `lake exe examples`.
+helpers = ["examples/Examples.lean", "examples/Examples/Main.lean"]
+
 [[example]]
 name = "HeaderCodec"
 file = "examples/Examples/HeaderCodec.lean"
+lean = "examples/Examples/HeaderCodec.lean"
+status = "own"
 module = "Keel.Codec"
 upstream = "none"
 summary = "A header block: name ': ' value in two-byte length frames, ended by 00 00; round-trips for every header list"
@@ -14,6 +21,8 @@ laws = ["Examples.HeaderCodec.roundTrip", "Keel.Codec.manyTill_lawful", "Keel.Co
 [[example]]
 name = "NestedLists"
 file = "examples/Examples/NestedLists.lean"
+lean = "examples/Examples/NestedLists.lean"
+status = "own"
 module = "Keel.Parse"
 upstream = "none"
 summary = "Nested lists of naturals with a depth-bounded recursive parser; 10^6 nesting fails cleanly"
@@ -22,6 +31,8 @@ laws = ["Examples.NestedLists.tree_ok", "Examples.NestedLists.body_monotone", "K
 [[example]]
 name = "Offer"
 file = "examples/Examples/Offer.lean"
+lean = "examples/Examples/Offer.lean"
+status = "own"
 module = "Keel.Refine"
 upstream = "none"
 summary = "STYLE.md's Offer: refined fields with a literal default, validated from raw input with errors located under each field"
@@ -30,6 +41,8 @@ laws = ["Examples.Offer.validate_ok_iff", "Examples.Offer.validate_errors_locate
 [[example]]
 name = "Router"
 file = "examples/Examples/Router.lean"
+lean = "examples/Examples/Router.lean"
+status = "own"
 module = "Keel.Route"
 upstream = "none"
 summary = "Three starlette-style routes with a typed int capture; both Allow policies; DELETE on any item is a 405"
